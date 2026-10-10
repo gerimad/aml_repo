@@ -1,6 +1,6 @@
 Now your task is the following, take the idea: 
 
-# Idea: algorithmic complexity as a market efficiency measure
+# Idea: illicit transaction classification under temporal drift
 
 And do the following workflow:
 
