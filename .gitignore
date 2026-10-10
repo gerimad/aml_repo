@@ -3,6 +3,7 @@ __pycache__/
 .env
 .ipynb_checkpoints/
 .DS_Store/
+.DS_Store
 
 # Datasets stay local: ignore everything in data/ except its README
 data/*
