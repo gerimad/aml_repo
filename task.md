@@ -1,6 +1,6 @@
 Now your task is the following, take the idea: 
 
-# Idea: market regimes with HMM vs. MDL segmentation
+# Idea: algorithmic complexity as a market efficiency measure
 
 And do the following workflow:
 

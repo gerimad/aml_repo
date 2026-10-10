@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
@@ -28,6 +29,8 @@ import pandas as pd
 import requests
 
 BASE_URL = "https://data.binance.vision/data/spot"
+# The files are served from this S3 bucket, which can also be listed.
+BUCKET_URL = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
 
@@ -78,6 +81,72 @@ def daily_url(symbol: str, interval: str, day: date) -> str:
     """URL of the zip file holding one day of candles."""
     name = f"{symbol}-{interval}-{day.isoformat()}.zip"
     return f"{BASE_URL}/daily/klines/{symbol}/{interval}/{name}"
+
+
+def list_bucket(prefix: str, session: requests.Session | None = None) -> list[str]:
+    """List the entries directly under `prefix` in the Binance data bucket.
+
+    Returns folder prefixes and file keys, following the pagination of the S3
+    listing (1,000 entries per page).
+    """
+    entries, marker = [], ""
+    while True:
+        response = (session or requests).get(
+            BUCKET_URL, params={"delimiter": "/", "prefix": prefix, "marker": marker}, timeout=60
+        )
+        response.raise_for_status()
+        text = response.text
+        entries += re.findall(r"<Prefix>([^<]+)</Prefix>", text)[1:]  # first one echoes the query
+        entries += re.findall(r"<Key>([^<]+)</Key>", text)
+        if "<IsTruncated>true</IsTruncated>" not in text:
+            return entries
+        next_marker = re.search(r"<NextMarker>([^<]+)</NextMarker>", text)
+        marker = next_marker.group(1) if next_marker else entries[-1]
+
+
+def list_symbols(quote: str = "USDT", session: requests.Session | None = None) -> list[str]:
+    """All spot symbols quoted in `quote` that have monthly candle files, delisted ones included."""
+    folders = list_bucket("data/spot/monthly/klines/", session)
+    symbols = [folder.rstrip("/").split("/")[-1] for folder in folders]
+    return sorted(symbol for symbol in symbols if symbol.endswith(quote))
+
+
+def list_months(
+    symbol: str, interval: str = "1h", session: requests.Session | None = None
+) -> list[tuple[int, int]]:
+    """The (year, month) pairs for which a monthly candle file is published."""
+    keys = list_bucket(f"data/spot/monthly/klines/{symbol}/{interval}/", session)
+    found = [re.search(r"-(\d{4})-(\d{2})\.zip$", key) for key in keys]
+    return sorted({(int(m.group(1)), int(m.group(2))) for m in found if m})
+
+
+# Symbols that are not a freely floating crypto asset priced in USDT.
+STABLE_OR_FIAT = {
+    "AEUR", "AUD", "BKRW", "BUSD", "DAI", "EUR", "EURI", "FDUSD", "GBP", "PAX", "SUSD", "TUSD",
+    "USD1", "USDC", "USDP", "USDS", "USDSB", "UST", "USTC", "XUSD", "BFUSD", "USDE",
+}  # fmt: skip
+PEGGED = {"PAXG", "WBTC", "WBETH", "BETH", "BNSOL"}
+REUSED_TICKERS = {"LUNA"}  # the 2022 relisting is a different asset under the old name
+# Binance leveraged tokens were named <BASE>UP / <BASE>DOWN and <BASE>BULL / <BASE>BEAR.
+LEVERAGED = re.compile(
+    r"^(BTC|ETH|BNB|XRP|EOS|ADA|LINK|DOT|LTC|TRX|XTZ|UNI|SXP|FIL|YFI|BCH|AAVE|SUSHI|XLM|1INCH)?"
+    r"(UP|DOWN|BULL|BEAR)$"
+)
+
+
+def exclusion_reason(symbol: str, quote: str = "USDT") -> str | None:
+    """Why a symbol is left out of the coin universe, or None if it is kept."""
+    base = symbol.removesuffix(quote)
+    if base in STABLE_OR_FIAT:
+        return "stablecoin or fiat"
+    if base in PEGGED:
+        return "pegged to another asset"
+    if base in REUSED_TICKERS:
+        return "ticker reused for a different asset"
+    match = LEVERAGED.match(base)
+    if match and (match.group(1) or base in {"BULL", "BEAR"}):
+        return "leveraged token"
+    return None
 
 
 def parse_kline_csv(raw: bytes) -> pd.DataFrame:
