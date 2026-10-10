@@ -149,6 +149,104 @@ def fetch_transactions(hashes, url: str = TX_RPC, session=None, batch: int = 100
     return pd.DataFrame(rows, columns=["tx_hash", "tx_from", "tx_to"])
 
 
+SELECTOR_TOKEN0, SELECTOR_TOKEN1 = "0x0dfe1681", "0xd21220a7"  # token0() and token1()
+
+
+def fetch_pool_tokens(
+    pools, url: str = LOGS_RPC, session=None, batch: int = 1, pause: float = 0.0
+) -> pd.DataFrame:
+    """The two tokens of each pool, read from the pool contracts: columns pool, token0, token1.
+
+    Calls token0() and token1() on every pool, `batch` pools per request with
+    `pause` seconds in between. The defaults suit the free endpoint used: it
+    accepts at most three calls per request, so one pool (two calls) at a
+    time. A pool that does not answer (not a standard pool, or destroyed)
+    gets None in both columns.
+    """
+    pools = list(dict.fromkeys(pools))
+    rows = []
+    for i in range(0, len(pools), batch):
+        part = pools[i : i + batch]
+        payload = [
+            {
+                "jsonrpc": "2.0",
+                "id": 2 * j + k,
+                "method": "eth_call",
+                "params": [{"to": pool, "data": selector}, "latest"],
+            }
+            for j, pool in enumerate(part)
+            for k, selector in enumerate((SELECTOR_TOKEN0, SELECTOR_TOKEN1))
+        ]
+        answers = _batch_allowing_reverts(url, payload, session)
+        for j, pool in enumerate(part):
+            words = [answers.get(2 * j + k) for k in (0, 1)]
+            ok = all(isinstance(w, str) and len(w) == 66 for w in words)
+            rows.append(
+                {
+                    "pool": pool,
+                    "token0": topic_address(words[0]) if ok else None,
+                    "token1": topic_address(words[1]) if ok else None,
+                }
+            )
+        time.sleep(pause)
+    return pd.DataFrame(rows, columns=["pool", "token0", "token1"])
+
+
+def _batch_allowing_reverts(url: str, payload: list, session=None, retries: int = 8) -> dict:
+    """Send a batch of calls, some of which may revert; return {id: result or None}.
+
+    A call that reverts is a real answer ("this contract has no such
+    function") and maps to None. Any other error, such as a rate limit, means
+    the batch was not served: it is retried with a growing wait, and never
+    mistaken for a revert.
+    """
+    last_error = None
+    for attempt in range(retries):
+        try:
+            answer = (session or requests).post(url, json=payload, timeout=90).json()
+            if isinstance(answer, list) and len(answer) == len(payload):
+                failed = [a for a in answer if "result" not in a and not _is_revert(a)]
+                if not failed:
+                    return {a["id"]: a.get("result") for a in answer}
+                last_error = str(failed[0])[:300]
+            else:
+                last_error = str(answer)[:300]
+        except (requests.RequestException, ValueError) as error:
+            last_error = repr(error)
+        time.sleep(min(2**attempt, 30))
+    raise RuntimeError(f"RPC batch to {url} failed: {last_error}")
+
+
+def _is_revert(answer: dict) -> bool:
+    """Whether a JSON-RPC error answer reports that the called contract reverted."""
+    error = answer.get("error") or {}
+    return error.get("code") == 3 or "revert" in str(error.get("message", "")).lower()
+
+
+def load_pool_tokens(
+    pools, data_dir: Path = DATA_DIR, block_size: int = 800, workers: int = 8
+) -> pd.DataFrame:
+    """Tokens of the given pools, from a local cache that is extended as needed.
+
+    Missing pools are fetched `block_size` at a time by `workers` threads,
+    and the cache is saved after each block, so an interrupted run loses little.
+    """
+    path = data_dir / "pool_tokens.parquet"
+    columns = ["pool", "token0", "token1"]
+    known = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
+    have = set(known["pool"])
+    missing = [pool for pool in dict.fromkeys(pools) if pool not in have]
+    for i in range(0, len(missing), block_size):
+        block = missing[i : i + block_size]
+        shares = [block[j::workers] for j in range(workers) if block[j::workers]]
+        with ThreadPoolExecutor(workers) as pool_of_threads:
+            fetched = list(pool_of_threads.map(fetch_pool_tokens, shares))
+        known = pd.concat([known, *fetched], ignore_index=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        known.to_parquet(path)
+    return known[known["pool"].isin(set(pools))].reset_index(drop=True)
+
+
 def download_chunk(start: int, end: int, out_dir: Path = DATA_DIR) -> Path:
     """Download blocks start..end into one Parquet file, unless it already exists."""
     path = out_dir / "chunks" / f"swaps_{start}_{end}.parquet"

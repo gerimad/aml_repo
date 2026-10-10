@@ -1,6 +1,6 @@
 Now your task is the following, take the idea: 
 
-# Idea: trading bot fingerprinting with probabilistic automata
+# Idea: next-pool recommendation for traders
 
 And do the following workflow:
 

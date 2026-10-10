@@ -123,6 +123,61 @@ def test_fetch_transactions_batches_and_keeps_order():
     assert transactions["tx_from"].iloc[0] == "0xf" + "1" * 39  # lower case
 
 
+class FakeTokenNode:
+    """Answers token0() / token1() calls; the pool "0xdead" does not answer."""
+
+    def __init__(self, rate_limited_first=0):
+        self.calls, self.rate_limited_first = 0, rate_limited_first
+
+    def post(self, url, json=None, timeout=None):
+        self.calls += 1
+        if self.rate_limited_first > 0:
+            self.rate_limited_first -= 1
+            return FakeResponse([{"id": c["id"], "error": {"code": -32005, "message": "Rate limit exceeded"}} for c in json])
+        answers = []
+        for call in json:
+            pool, selector = call["params"][0]["to"], call["params"][0]["data"]
+            if pool == "0xdead":
+                answers.append({"id": call["id"], "error": {"message": "execution reverted"}})
+            else:
+                token = "0x" + ("1" if selector == ds.SELECTOR_TOKEN0 else "2") * 40
+                answers.append({"id": call["id"], "result": topic(token)})
+        return FakeResponse(answers)
+
+
+def test_fetch_pool_tokens_retries_when_rate_limited(monkeypatch):
+    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
+    node = FakeTokenNode(rate_limited_first=2)
+    tokens = ds.fetch_pool_tokens(["0xaaa"], session=node)
+    # A rate limit must never be recorded as "this pool has no tokens".
+    assert tokens.loc[0, "token0"] == "0x" + "1" * 40 and node.calls == 3
+    with pytest.raises(RuntimeError):
+        ds._batch_allowing_reverts("http://node", [{"id": 0, "params": [{"to": "0xaaa", "data": ds.SELECTOR_TOKEN0}]}], FakeTokenNode(rate_limited_first=99), retries=2)
+
+
+def test_fetch_pool_tokens_handles_pools_that_do_not_answer(monkeypatch):
+    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
+    node = FakeTokenNode()
+    tokens = ds.fetch_pool_tokens(["0xaaa", "0xdead", "0xbbb", "0xaaa"], session=node, batch=2)
+    assert tokens["pool"].tolist() == ["0xaaa", "0xdead", "0xbbb"]
+    assert tokens.loc[0, "token0"] == "0x" + "1" * 40 and tokens.loc[0, "token1"] == "0x" + "2" * 40
+    assert tokens.loc[1, ["token0", "token1"]].isna().all()
+    assert node.calls == 2
+
+
+def test_load_pool_tokens_caches_and_extends(tmp_path, monkeypatch):
+    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
+    node, real_fetch = FakeTokenNode(), ds.fetch_pool_tokens
+    monkeypatch.setattr(ds, "fetch_pool_tokens", lambda pools: real_fetch(pools, session=node))
+    first = ds.load_pool_tokens(["0xaaa", "0xbbb"], tmp_path)
+    assert len(first) == 2 and node.calls == 2  # one request per pool
+    again = ds.load_pool_tokens(["0xaaa"], tmp_path)
+    assert len(again) == 1 and node.calls == 2  # served from the cache
+    more = ds.load_pool_tokens(["0xaaa", "0xccc"], tmp_path)
+    assert set(more["pool"]) == {"0xaaa", "0xccc"} and node.calls == 3
+    assert more["token0"].notna().all()
+
+
 def test_chunk_ranges():
     assert ds.chunk_ranges(1000, 2500, size=1000) == [(1000, 1999), (2000, 2999), (3000, 3499)]
     assert ds.chunk_ranges(5, 3, size=1000) == [(5, 7)]
