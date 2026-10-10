@@ -1,6 +1,6 @@
 Now your task is the following, take the idea: 
 
-# Idea: illicit transaction classification under temporal drift
+# Idea: trading bot fingerprinting with probabilistic automata
 
 And do the following workflow:
 
