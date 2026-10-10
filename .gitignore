@@ -1,3 +1,8 @@
 .venv/
 __pycache__/
 .env
+.ipynb_checkpoints/
+
+# Datasets stay local: ignore everything in data/ except its README
+data/*
+!data/README.md
