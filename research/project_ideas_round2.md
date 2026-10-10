@@ -246,9 +246,13 @@ Polymarket runs markets on whether BTC, ETH and others will be up in the
 next 5 or 15 minutes. Test whether their prices are calibrated
 probabilities, and whether a model built on spot data beats them.
 
-- **Data:** `data/polymarket_crypto_5m_15m/` holds 6,700 markets with their
-  resolutions and 9 million trades (January to March 2026), and the repo has
-  one-minute BTC spot candles for the same period.
+- **Data:** `data/polymarket_5m_kachoio/` holds 15,682 five-minute BTC
+  markets over 56 days (March to May 2026) with per-second quotes and
+  outcomes. `data/polymarket_crypto_5m_15m/` adds four assets and two
+  horizons, but its 9 million trades cover only about four and a half days
+  in March 2026, not January to March as first written here. The repo has
+  one-minute BTC spot candles for both periods. See
+  [`idea_prediction_market_calibration.md`](idea_prediction_market_calibration.md).
 - **Topics:** T1 (classification), T4 (logistic / MaxEnt, Bayesian), T3
   (proper scoring rules, calibration).
 - **Why high quality:** exact labels (the resolutions), thousands of

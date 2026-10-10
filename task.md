@@ -1,6 +1,6 @@
 Now your task is the following, take the idea: 
 
-# Idea: next-pool recommendation for traders
+# Idea: the first seconds of a memecoin launch, bundles, copycats and outcomes
 
 And do the following workflow:
 
