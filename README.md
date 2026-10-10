@@ -22,6 +22,23 @@ details coming soon
 
 Each directory has its own `README.md` with more detail.
 
+## Workflow
+
+1. **Check out a new branch** for your experiment:
+   ```bash
+   git checkout -b <experiment-name>
+   ```
+2. **Create an experiment notebook** in [`src/notebooks/`](src/notebooks/).
+3. **Run the experiment** and document the results in the notebook.
+4. **Extract reusable code.** If the experiment produces code worth reusing,
+   move it into [`src/scripts/`](src/scripts/) with well-documented comments
+   on how to use it.
+5. **Push the branch to the remote:**
+   ```bash
+   git push -u origin <experiment-name>
+   ```
+6. **Open a pull request** into `main` in the GitHub UI.
+
 ## Rules
 
 - **Never commit data files or binaries to version control.** Datasets, model
