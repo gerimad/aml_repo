@@ -3,7 +3,11 @@ __pycache__/
 .env
 .ipynb_checkpoints/
 .DS_Store/
+.DS_Store
 
 # Datasets stay local: ignore everything in data/ except its README
 data/*
 !data/README.md
+
+# Downloaded papers stay local: the literature review links to the sources
+research/literature/papers/
