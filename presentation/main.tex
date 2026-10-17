@@ -153,45 +153,8 @@
         Learning to rank \cite{burges2010}; two-stage systems \cite{covington2016};
         NFT recommenders \cite{choi2024,nftmine2023}.
       \end{block}
-      \vspace{2pt}
-      {\color{orange}\faSearch}\ \textbf{Gap:} in our searches we found \emph{no} paper recommending fungible tokens from on-chain trades.
-      (Absence in a few searches, not proof.)
     \end{column}
   \end{columns}
-  \source{Read in full: \cite{sarwar2001,cremonesi2010,schein2002}. The others at abstract level or more.}
-\end{frame}
-
-\begin{frame}{Three papers read in full, and what we take from each}
-  \small
-  \renewcommand{\arraystretch}{1.25}
-  \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
-    \toprule
-    Paper & Main finding & What we use \\
-    \midrule
-    \textbf{Sarwar et al.}\ \cite{sarwar2001} & Score an item by its similarity to the user's own items. Keeping only 25--50 neighbours per item keeps 96--98\% of the accuracy. & The core method; a short neighbour list per token. \\
-    \textbf{Cremonesi et al.}\ \cite{cremonesi2010} & For top-$N$ lists, a plain ``most popular'' list is close to sophisticated models; on the less popular items it collapses. & Popularity as the serious baseline; results also without the most popular tokens. \\
-    \textbf{Schein et al.}\ \cite{schein2002} & Items nobody has used yet cannot be found by collaborative filtering; they need item content, and trivial heuristics must be compared. & Cold start as a separate problem, compared with simple heuristics. \\
-    \bottomrule
-  \end{tabularx}
-  \source{Details and what does \emph{not} carry over: backup slides.}
-\end{frame}
-
-\begin{frame}{How the literature changed the plan}
-  \small
-  \renewcommand{\arraystretch}{1.2}
-  \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.0cm}@{}}
-    \toprule
-    Lesson & Consequence for us & Source \\
-    \midrule
-    Short histories favour item-to-item methods & Item nearest neighbours first & \cite{sarwar2001,ludewig2018} \\
-    Simple tuned models match complex ones & No neural network in the plan & \cite{dacrema2019,anelli2022} \\
-    Popularity is strong and often mis-measured & Popularity is the fixed baseline, measured at time $t$ & \cite{li2021,ji2020pop} \\
-    Per-user splits leak the future & One global timeline for all users & \cite{ji2020leak} \\
-    Sampled metrics mislead & Every model ranks \emph{all} tokens & \cite{krichene2020} \\
-    Repeat and new items are different tasks & Only new tokens are the target & \cite{li2021} \\
-    Generate candidates, then rank them & Two-stage method with a learned ranker & \cite{covington2016,burges2010} \\
-    \bottomrule
-  \end{tabularx}
 \end{frame}
 
 % ===========================================================================
@@ -611,24 +574,6 @@
   \end{columns}
 \end{frame}
 
-\begin{frame}{Why this method fits the task and the data}
-  \small
-  \renewcommand{\arraystretch}{1.12}
-  \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}X@{}}
-    \toprule
-    Property of the task & How the method answers \\
-    \midrule
-    Only positives, no ratings & Binary data, co-usage similarity, ranking metrics \cite{hu2008,rendle2009} \\
-    The typical account has one token & Item neighbours need only one item; user-specific factors would be fitted on almost nothing \cite{hidasi2016,ludewig2018} \\
-    Popularity is strong & Popularity is a term of the score \cite{li2021} \\
-    Thousands of tokens with a handful of accounts & Shrinkage $\lambda$ and top-$k$ truncation \\
-    $\sim$20k tokens, $\sim$100k accounts & Sparse linear algebra on one machine; nothing heavy needed \cite{dacrema2019,anelli2022} \\
-    The best mix of signals may differ between accounts & A learned ranker combines them \cite{burges2010} \\
-    Exact labels at every point & Each dev point is a labelled training set \\
-    \bottomrule
-  \end{tabularx}
-\end{frame}
-
 \begin{frame}{The three core problems of the project}
   \begin{columns}[T]
     \begin{column}{0.32\textwidth}
@@ -637,8 +582,6 @@
         The typical account has one token.
         \par\smallskip
         \textbf{Question:} what do neighbours add to popularity?
-        \par\smallskip
-        \textbf{Work:} tune $k$, $\lambda$, $w$; report by history size (1, 2--4, 5+).
       \end{block}
     \end{column}
     \begin{column}{0.32\textwidth}
@@ -647,8 +590,6 @@
         Interest moves fast; the baseline swings 0.11--0.20.
         \par\smallskip
         \textbf{Question:} how much should old trades count?
-        \par\smallskip
-        \textbf{Work:} weight a trade of age $a$ by $2^{-a/h}$; tune the half-life $h$.
       \end{block}
     \end{column}
     \begin{column}{0.32\textwidth}
@@ -657,8 +598,6 @@
         15--25\% of targets did not exist at time $t$.
         \par\smallskip
         \textbf{Question:} how much is reachable with refreshed lists?
-        \par\smallskip
-        \textbf{Work:} rebuild lists every few hours; token features from the first hour \cite{schein2002}.
       \end{block}
     \end{column}
   \end{columns}
@@ -708,7 +647,6 @@
         \item Two weeks, one market phase; only the baseline has results.
         \item One account $\neq$ one person; bots are not removed.
         \item Only Uniswap V2/V3-style pools.
-        \item Most references were read at abstract level.
       \end{itemize}
       \textbf{Use and harm.} Recommending speculative tokens is not obviously good. We treat this as a study of trading behaviour and of evaluation, not as a product.
     \end{column}
