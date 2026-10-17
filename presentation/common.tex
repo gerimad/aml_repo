@@ -1,0 +1,84 @@
+% Shared preamble for the main deck and the backup deck.
+% Compile with lualatex (see README.md).
+\usetheme[progressbar=frametitle,numbering=fraction,sectionpage=progressbar]{metropolis}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setsansfont{Fira Sans}[BoldFont={Fira Sans SemiBold}, ItalicFont={Fira Sans Italic}, BoldItalicFont={Fira Sans SemiBold Italic}]
+\setmonofont{Fira Mono}[Scale=0.9]
+\setmathfont{Fira Math}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,shapes.geometric,fit,backgrounds,decorations.pathreplacing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{fontawesome5}
+
+% ---- palette -------------------------------------------------------------
+\definecolor{ink}{HTML}{1F2A3A}      % text
+\definecolor{navy}{HTML}{23395B}     % frame titles
+\definecolor{blue}{HTML}{2F6DB5}     % main data colour (history, popular, known)
+\definecolor{teal}{HTML}{1F8A70}     % method / good
+\definecolor{orange}{HTML}{D9622B}   % cold start / warning / target
+\definecolor{sand}{HTML}{F3EEE6}     % boxes
+\definecolor{mist}{HTML}{E8EEF5}     % light blue boxes
+\definecolor{grey}{HTML}{7A8494}
+
+\setbeamercolor{normal text}{fg=ink,bg=white}
+\setbeamercolor{frametitle}{bg=navy,fg=white}
+\setbeamercolor{progress bar}{fg=orange,bg=navy!40}
+\setbeamercolor{alerted text}{fg=orange}
+\setbeamercolor{example text}{fg=teal}
+\setbeamercolor{title separator}{fg=orange}
+\metroset{block=fill}
+\setbeamercolor{block title}{bg=mist,fg=navy}
+\setbeamercolor{block body}{bg=mist!45,fg=ink}
+\setbeamerfont{bibliography item}{size=\scriptsize}
+\setbeamerfont{bibliography entry author}{size=\scriptsize}
+\setbeamerfont{bibliography entry title}{size=\scriptsize}
+\setbeamerfont{bibliography entry location}{size=\scriptsize}
+\setbeamerfont{bibliography entry note}{size=\scriptsize}
+\setbeamercolor{bibliography item}{fg=navy}
+\setbeamercolor{bibliography entry author}{fg=ink}
+\setbeamercolor{bibliography entry title}{fg=ink}
+\setbeamercolor{bibliography entry location}{fg=ink}
+\setbeamercolor{footnote}{fg=grey}
+\setbeamerfont{footnote}{size=\tiny}
+\setbeamerfont{frametitle}{size=\large}
+\setbeamertemplate{itemize item}{\color{orange}\textbullet}
+\setbeamertemplate{itemize subitem}{\color{grey}--}
+\setlength{\leftmargini}{1.1em}
+
+% ---- helpers ---------------------------------------------------------------
+\newcommand{\code}[1]{\texttt{#1}}
+% source line at the bottom of a frame
+\newcommand{\source}[1]{\par\vfill\hfill{\scriptsize\color{grey}#1}}
+% big number tile: \stat{value}{label}
+\newcommand{\stat}[2]{%
+  \begin{tikzpicture}
+    \node[fill=mist,rounded corners=3pt,minimum width=2.55cm,minimum height=1.75cm,align=center,inner sep=4pt]
+      {{\Large\bfseries\color{navy}#1}\\[2pt]{\scriptsize\color{ink}#2}};
+  \end{tikzpicture}}
+% one-line takeaway box at the bottom of a slide
+\newcommand{\takeaway}[1]{%
+  \par\vspace{4pt}\noindent
+  \begin{tikzpicture}
+    \node[fill=sand,draw=orange,line width=0.6pt,rounded corners=3pt,text width=0.92\textwidth,inner sep=6pt,align=left]
+      {\small\textbf{\color{orange}Takeaway.} #1};
+  \end{tikzpicture}}
+\newcommand{\done}{{\color{teal}\faCheckCircle\ done}}
+\newcommand{\planned}{{\color{orange}\faClock[regular]\ planned}}
+
+\tikzset{
+  box/.style={draw=navy,rounded corners=3pt,fill=mist,align=center,inner sep=4pt,font=\small},
+  arr/.style={-{Stealth[length=2.2mm]},thick,color=navy},
+  tok/.style={circle,draw=navy,thick,minimum size=7mm,inner sep=0pt,font=\scriptsize\bfseries},
+  user/.style={rectangle,align=center,rounded corners=2pt,draw=grey,fill=white,minimum size=6mm,inner sep=1pt,font=\scriptsize},
+}
+
+\title{Next-Token Recommendation for Decentralized-Exchange Traders}
+\author{Gergely Madarász \and Levente Tóth \and Béla Jakab}
+\institute{Budapest University of Technology and Economics\\Advanced Machine Learning, project plan}
+\date{October 2026}
