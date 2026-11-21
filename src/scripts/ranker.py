@@ -366,3 +366,30 @@ def ranker_scorer(model, feature_names: list[str], task: pc.Task, rows: pd.DataF
         return dense
 
     return scorer
+
+
+# --------------------------------------------------------------------------
+# Saving and loading a trained ranker
+# --------------------------------------------------------------------------
+
+
+def save_model(model, path: Path) -> None:
+    """Save a ranker: LightGBM boosters as their text format, the logistic pipeline with pickle."""
+    import pickle
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(model, lgb.Booster):
+        model.save_model(str(path))
+    else:
+        with open(path, "wb") as f:
+            pickle.dump(model, f)
+
+
+def load_model(path: Path, kind: str):
+    """Load a ranker saved by save_model; `kind` says which format it is."""
+    import pickle
+
+    if kind in ("gbdt", "lambdamart"):
+        return lgb.Booster(model_file=str(path))
+    with open(path, "rb") as f:
+        return pickle.load(f)

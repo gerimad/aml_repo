@@ -109,3 +109,16 @@ def test_cv_over_points_never_trains_on_a_held_out_point():
     rows = pd.concat(all_rows, ignore_index=True)
     score = rk.cv_over_points("logistic", {"C": 1.0}, rows, rows, rk.positives_per_user(tasks), rk.ALL_FEATURES)
     assert 0 <= score <= 1
+
+
+@pytest.mark.parametrize("kind, params", [
+    ("logistic", {"C": 1.0}),
+    ("gbdt", {"num_leaves": 3, "learning_rate": 0.1, "min_data_in_leaf": 2}),
+])  # fmt: skip
+def test_a_saved_model_predicts_the_same_after_loading(tmp_path, kind, params):
+    legs, task, stage = setup()
+    rows = rk.features(stage, rk.candidates(stage, task.eval_rows), legs, token_table(legs))
+    model = rk.fit_model(kind, rows, rk.ALL_FEATURES, params, n_trees=5)
+    rk.save_model(model, tmp_path / "model")
+    again = rk.load_model(tmp_path / "model", kind)
+    assert np.allclose(rk.predict(model, rows, rk.ALL_FEATURES), rk.predict(again, rows, rk.ALL_FEATURES))
