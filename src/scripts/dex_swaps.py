@@ -142,11 +142,28 @@ def fetch_transactions(hashes, url: str = TX_RPC, session=None, batch: int = 100
         ]
         for tx_hash, tx in zip(part, rpc(url, payload, session)):
             if tx is None:
-                raise RuntimeError(f"transaction {tx_hash} not found")
+                tx = _refetch_transaction(tx_hash, url, session)
             rows.append(
                 {"tx_hash": tx_hash, "tx_from": tx["from"].lower(), "tx_to": (tx["to"] or "").lower()}
             )
     return pd.DataFrame(rows, columns=["tx_hash", "tx_from", "tx_to"])
+
+
+def _refetch_transaction(tx_hash: str, url: str, session=None, attempts: int = 5, wait: float = 2.0) -> dict:
+    """Ask again for a transaction the node answered with "not found".
+
+    The transaction certainly exists: its swap log was just read from the
+    chain. A public node that answers null is lagging or served the request
+    from a node without it, so the same question is asked again after a
+    growing wait. Raises RuntimeError if it is still missing after `attempts` tries.
+    """
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionByHash", "params": [tx_hash]}
+    for attempt in range(attempts):
+        time.sleep(wait * 2**attempt)
+        tx = rpc(url, payload, session)
+        if tx is not None:
+            return tx
+    raise RuntimeError(f"transaction {tx_hash} not found after {attempts} more tries")
 
 
 SELECTOR_TOKEN0, SELECTOR_TOKEN1 = "0x0dfe1681", "0xd21220a7"  # token0() and token1()

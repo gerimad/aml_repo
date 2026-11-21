@@ -300,3 +300,34 @@ def test_validate_swaps_flags_unknown_pools():
     swaps.loc[:4, "pool"] = "unknown"
     week = ds.validate_swaps(swaps, POOL_P).iloc[0]
     assert week["swaps_with_known_tokens"] < 0.999 and not week["passed"]
+
+
+class LaggingNode:
+    """Answers every transaction lookup, except that it first answers null `misses` times for "0xlate"."""
+
+    def __init__(self, misses):
+        self.misses = misses
+
+    def post(self, url, json=None, timeout=None):
+        calls = json if isinstance(json, list) else [json]
+        answers = []
+        for call in calls:
+            tx_hash = call["params"][0]
+            if tx_hash == "0xlate" and self.misses > 0:
+                self.misses -= 1
+                answers.append({"id": call["id"], "result": None})
+            else:
+                answers.append({"id": call["id"], "result": {"from": "0xAB", "to": "0xCD"}})
+        return FakeResponse(answers if isinstance(json, list) else answers[0])
+
+
+def test_fetch_transactions_asks_again_when_the_node_says_not_found(monkeypatch):
+    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
+    transactions = ds.fetch_transactions(["0xa", "0xlate"], session=LaggingNode(misses=3))
+    assert transactions["tx_from"].tolist() == ["0xab", "0xab"]
+
+
+def test_fetch_transactions_gives_up_if_a_transaction_stays_missing(monkeypatch):
+    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
+    with pytest.raises(RuntimeError, match="not found after 5 more tries"):
+        ds.fetch_transactions(["0xlate"], session=LaggingNode(misses=100))
