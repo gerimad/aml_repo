@@ -44,18 +44,19 @@ def test_refreshing_every_48_hours_is_the_main_protocol():
     legs = market()
     task = pc.make_task(legs, T)
     main, _ = pc.evaluate_point(pc.popularity_scorer(task), task)
-    refreshed = cs.refreshed_evaluate(cs.popularity_factory, legs, task, token_table(legs), hours=48)
-    assert refreshed["recall"].mean() == pytest.approx(main["recall"].mean())
+    refreshed = cs.refreshed_evaluate({"popularity": cs.popularity_factory}, legs, task, token_table(legs), hours=48)
+    assert refreshed["popularity"]["recall"].mean() == pytest.approx(main["recall"].mean())
 
 
 def test_a_token_launched_in_the_target_becomes_reachable_with_refreshed_lists():
     legs = market()
     task = pc.make_task(legs, T)
     tokens = token_table(legs)
-    once = cs.refreshed_evaluate(cs.newest_popular_factory(24), legs, task, tokens, hours=48)
-    hourly = cs.refreshed_evaluate(cs.newest_popular_factory(24), legs, task, tokens, hours=1)
-    user1_once = once.set_index("user").loc[1]
-    user1_hourly = hourly.set_index("user").loc[1]
+    models = {"newest": cs.newest_popular_factory(24), "baseline": cs.popularity_factory}
+    once = cs.refreshed_evaluate(models, legs, task, tokens, hours=48)
+    hourly = cs.refreshed_evaluate(models, legs, task, tokens, hours=1)
+    user1_once = once["newest"].set_index("user").loc[1]
+    user1_hourly = hourly["newest"].set_index("user").loc[1]
     assert user1_once["cold_hits"] == 0, "at T the token does not exist"
     assert user1_hourly["cold_hits"] == 1, "at T + 10h the token is young and popular"
 

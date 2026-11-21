@@ -71,19 +71,28 @@ def refresh_times(t: pd.Timestamp, hours: float) -> list[pd.Timestamp]:
 
 
 def refreshed_evaluate(
-    factory: RefreshFactory, legs: pd.DataFrame, task: pc.Task, tokens: pd.DataFrame, hours: float, k: int = pc.K
-) -> pd.DataFrame:
-    """Recall@k of a model whose lists are rebuilt every `hours` hours (section 7.1).
+    factories: dict[str, RefreshFactory],
+    legs: pd.DataFrame,
+    task: pc.Task,
+    tokens: pd.DataFrame,
+    hours: float,
+    k: int = pc.K,
+) -> dict[str, pd.DataFrame]:
+    """Recall@k of models whose lists are rebuilt every `hours` hours (section 7.1).
 
-    Returns one row per evaluated user of `task` with user, positives, hits,
-    recall, cold_positives, cold_hits.
+    `factories` maps a model name to its scorer factory. All models are
+    scored in one pass over the refresh times, so the state at each refresh
+    (a Task built at s, which takes seconds) is built once, not once per model.
+
+    Returns, per model, one row per evaluated user of `task` with user,
+    positives, hits, recall, cold_positives, cold_hits.
     """
     pairs = first_trades_in_target(legs, task)
     times = refresh_times(task.t, hours)
     # The last refresh at or before tau is the number of whole intervals between t and tau.
     pairs["refresh"] = ((pairs["first_time"] - task.t) // pd.Timedelta(hours=hours)).astype(int)
     assert pairs["refresh"].between(0, len(times) - 1).all()
-    pairs["hit"] = False
+    hit = {name: np.zeros(len(pairs), dtype=bool) for name in factories}
 
     for j, s in enumerate(times):
         due = pairs[pairs["refresh"] == j]
@@ -93,20 +102,24 @@ def refreshed_evaluate(
         users_due = np.unique(due["user"].to_numpy())
         rows = np.searchsorted(state.users, users_due)
         assert (state.users[rows] == users_due).all(), "every evaluated user is known at every later refresh"
-        scores = factory(state, tokens)(rows)
-        recommended = pr.top_k(scores, k, exclude=state.past[rows])
-        listed = {(u, int(state.tokens[c])) for u, row in zip(users_due, recommended) for c in row}
-        pairs.loc[due.index, "hit"] = [(u, i) in listed for u, i in zip(due["user"], due["token"])]
+        for name, factory in factories.items():
+            scores = factory(state, tokens)(rows)
+            recommended = pr.top_k(scores, k, exclude=state.past[rows])
+            listed = {(u, int(state.tokens[c])) for u, row in zip(users_due, recommended) for c in row}
+            hit[name][due.index] = [(u, i) in listed for u, i in zip(due["user"], due["token"])]
 
-    pairs["cold_hit"] = pairs["hit"] & pairs["cold"]
-    per_user = pairs.groupby("user").agg(
-        positives=("hit", "size"),
-        hits=("hit", "sum"),
-        cold_positives=("cold", "sum"),
-        cold_hits=("cold_hit", "sum"),
-    )
-    per_user["recall"] = per_user["hits"] / per_user["positives"]
-    return per_user.reset_index()
+    results = {}
+    for name in factories:
+        scored = pairs.assign(hit=hit[name], cold_hit=hit[name] & pairs["cold"].to_numpy())
+        per_user = scored.groupby("user").agg(
+            positives=("hit", "size"),
+            hits=("hit", "sum"),
+            cold_positives=("cold", "sum"),
+            cold_hits=("cold_hit", "sum"),
+        )
+        per_user["recall"] = per_user["hits"] / per_user["positives"]
+        results[name] = per_user.reset_index()
+    return results
 
 
 def summarize_refreshed(name: str, hours: float, task: pc.Task, per_user: pd.DataFrame) -> dict:
