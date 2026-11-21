@@ -27,6 +27,7 @@ One row per swap, with:
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -68,7 +69,9 @@ def rpc(url: str, payload, session=None, retries: int = 6, timeout: int = 90):
             last_error = str(answer)[:300]
         except (requests.RequestException, ValueError) as error:
             last_error = repr(error)
-        time.sleep(min(2**attempt, 20))
+        wait = min(2**attempt, 20)
+        print(f"  retry {attempt + 1}/{retries} in {wait}s ({url}): {last_error[:120]}", file=sys.stderr, flush=True)
+        time.sleep(wait)
     raise RuntimeError(f"RPC call to {url} failed: {last_error}")
 
 
@@ -130,8 +133,13 @@ def fetch_swap_logs(start: int, end: int, url: str = LOGS_RPC, session=None, ste
     return pd.DataFrame(records, columns=SWAP_COLUMNS)
 
 
-def fetch_transactions(hashes, url: str = TX_RPC, session=None, batch: int = 100) -> pd.DataFrame:
-    """Signer and called contract of each transaction: columns tx_hash, tx_from, tx_to."""
+def fetch_transactions(hashes, url: str = TX_RPC, session=None, batch: int = 25) -> pd.DataFrame:
+    """Signer and called contract of each transaction: columns tx_hash, tx_from, tx_to.
+
+    `batch` lookups are sent per request. When the free endpoint is rate
+    limiting, it answers some entries of a batch with an error and the whole
+    batch is retried, so small batches waste less work.
+    """
     hashes = list(dict.fromkeys(hashes))
     rows = []
     for i in range(0, len(hashes), batch):
