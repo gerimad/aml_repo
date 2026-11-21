@@ -121,4 +121,6 @@ the command again and it continues where it stopped.
 
 ## Changes to the plan
 
-None so far.
+| Date | Change | Reason |
+| --- | --- | --- |
+| 21 Nov 2026 | The download starts at block 25,340,000 instead of 25,344,000. Legs outside 18 June 00:00 to 10 September 00:00 UTC are dropped, so the periods are exactly those of the plan. | Block 25,344,000 is at 18 June 10:58 UTC, so the plan's block range missed 11 hours of the first burn-in day. The plan's block numbers were approximate; its dates are not. Dropping legs after 10 September 00:00 also keeps the 11 hours of exploration-period data at the end of the block range out of the project. |

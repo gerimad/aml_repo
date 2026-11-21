@@ -36,7 +36,11 @@ import dex_swaps as ds
 import pool_recsys as pr
 
 PROJECT_DIR = Path(__file__).resolve().parents[2] / "data" / "project"
-PROJECT_FIRST_BLOCK = 25_344_000
+# The plan names blocks 25,344,000 to 25,948,799. Block 25,344,000 turned out to be
+# at 18 June 10:58 UTC, not midnight, so 4,000 earlier blocks are added to cover
+# the whole first day (recorded in project_direction.md, "Changes to the plan").
+# Legs outside [DATA_START, DATA_END) are dropped, so the dates are exactly the plan's.
+PROJECT_FIRST_BLOCK = 25_340_000
 PROJECT_LAST_BLOCK = 25_948_799
 
 # The project's calendar (implementation plan, section 1.1). All times UTC.
@@ -227,6 +231,15 @@ def build_project_data(out_dir: Path = PROJECT_DIR, chunks_per_batch: int = 50) 
     legs = pd.concat(leg_batches, ignore_index=True)
     del leg_batches
     legs = legs.sort_values(["block", "user", "token"], kind="stable", ignore_index=True)
+
+    # The blocks must cover the plan's dates; then legs outside them are dropped.
+    first_time, last_time = legs["timestamp"].min(), legs["timestamp"].max()
+    print(f"The blocks cover {first_time:%d %b %H:%M} to {last_time:%d %b %H:%M} (UTC).")
+    assert first_time <= DATA_START + pd.Timedelta(minutes=5), "the data must start by 18 June 00:00"
+    assert last_time >= DATA_END - pd.Timedelta(minutes=5), "the data must reach 10 September 00:00"
+    inside = (legs["timestamp"] >= DATA_START) & (legs["timestamp"] < DATA_END)
+    print(f"Keeping the legs from {DATA_START:%d %b} to {DATA_END:%d %b} 00:00: {len(legs):,} -> {int(inside.sum()):,}.")
+    legs = legs[inside].reset_index(drop=True)
     print(f"All legs: {len(legs):,} rows, {legs['user'].nunique():,} users, {legs['token'].nunique():,} tokens.")
 
     # Step 2
