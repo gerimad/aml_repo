@@ -321,13 +321,15 @@ class LaggingNode:
         return FakeResponse(answers if isinstance(json, list) else answers[0])
 
 
-def test_fetch_transactions_asks_again_when_the_node_says_not_found(monkeypatch):
+def test_fetch_transactions_asks_again_when_the_node_says_not_found(monkeypatch, capsys):
     monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
-    transactions = ds.fetch_transactions(["0xa", "0xlate"], session=LaggingNode(misses=3))
-    assert transactions["tx_from"].tolist() == ["0xab", "0xab"]
+    transactions = ds.fetch_transactions(["0xa", "0xlate", "0xb"], session=LaggingNode(misses=3))
+    assert transactions["tx_hash"].tolist() == ["0xa", "0xlate", "0xb"], "the order of the input is kept"
+    assert transactions["tx_from"].tolist() == ["0xab", "0xab", "0xab"]
+    assert "round 3/8" in capsys.readouterr().err, "every round of asking again is logged"
 
 
 def test_fetch_transactions_gives_up_if_a_transaction_stays_missing(monkeypatch):
     monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
-    with pytest.raises(RuntimeError, match="not found after 5 more tries"):
+    with pytest.raises(RuntimeError, match="still not found after 8 rounds"):
         ds.fetch_transactions(["0xlate"], session=LaggingNode(misses=100))

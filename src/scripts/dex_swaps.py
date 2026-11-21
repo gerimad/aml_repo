@@ -133,45 +133,56 @@ def fetch_swap_logs(start: int, end: int, url: str = LOGS_RPC, session=None, ste
     return pd.DataFrame(records, columns=SWAP_COLUMNS)
 
 
-def fetch_transactions(hashes, url: str = TX_RPC, session=None, batch: int = 25) -> pd.DataFrame:
+def fetch_transactions(
+    hashes, url: str = TX_RPC, session=None, batch: int = 25, rounds: int = 8, pause: float = 1.0
+) -> pd.DataFrame:
     """Signer and called contract of each transaction: columns tx_hash, tx_from, tx_to.
 
-    `batch` lookups are sent per request. When the free endpoint is rate
-    limiting, it answers some entries of a batch with an error and the whole
-    batch is retried, so small batches waste less work.
+    `batch` lookups are sent per request. Small batches waste less work when
+    a rate-limited endpoint answers part of a batch with errors (the whole
+    batch is then retried by rpc).
+
+    The public endpoint spreads requests over several nodes, and some of them
+    answer null for old transactions. The transactions certainly exist (their
+    swap logs were just read), so the ones answered null are collected and
+    asked for again together, after `pause` seconds, up to `rounds` times.
+    Each such round is logged. Raises RuntimeError if any are still missing.
     """
     hashes = list(dict.fromkeys(hashes))
-    rows = []
+    found = {}
     for i in range(0, len(hashes), batch):
         part = hashes[i : i + batch]
-        payload = [
-            {"jsonrpc": "2.0", "id": j, "method": "eth_getTransactionByHash", "params": [h]}
-            for j, h in enumerate(part)
-        ]
-        for tx_hash, tx in zip(part, rpc(url, payload, session)):
-            if tx is None:
-                tx = _refetch_transaction(tx_hash, url, session)
-            rows.append(
-                {"tx_hash": tx_hash, "tx_from": tx["from"].lower(), "tx_to": (tx["to"] or "").lower()}
-            )
+        for tx_hash, tx in zip(part, _lookup_transactions(part, url, session)):
+            if tx is not None:
+                found[tx_hash] = tx
+
+    missing = [h for h in hashes if h not in found]
+    for attempt in range(1, rounds + 1):
+        if not missing:
+            break
+        print(f"  {len(missing)} transaction(s) answered null, asking again (round {attempt}/{rounds})", file=sys.stderr, flush=True)
+        time.sleep(pause)
+        for i in range(0, len(missing), batch):
+            part = missing[i : i + batch]
+            for tx_hash, tx in zip(part, _lookup_transactions(part, url, session)):
+                if tx is not None:
+                    found[tx_hash] = tx
+        missing = [h for h in missing if h not in found]
+    if missing:
+        raise RuntimeError(f"{len(missing)} transaction(s) still not found after {rounds} rounds, e.g. {missing[0]}")
+
+    rows = [
+        {"tx_hash": h, "tx_from": found[h]["from"].lower(), "tx_to": (found[h]["to"] or "").lower()} for h in hashes
+    ]
     return pd.DataFrame(rows, columns=["tx_hash", "tx_from", "tx_to"])
 
 
-def _refetch_transaction(tx_hash: str, url: str, session=None, attempts: int = 5, wait: float = 2.0) -> dict:
-    """Ask again for a transaction the node answered with "not found".
-
-    The transaction certainly exists: its swap log was just read from the
-    chain. A public node that answers null is lagging or served the request
-    from a node without it, so the same question is asked again after a
-    growing wait. Raises RuntimeError if it is still missing after `attempts` tries.
-    """
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionByHash", "params": [tx_hash]}
-    for attempt in range(attempts):
-        time.sleep(wait * 2**attempt)
-        tx = rpc(url, payload, session)
-        if tx is not None:
-            return tx
-    raise RuntimeError(f"transaction {tx_hash} not found after {attempts} more tries")
+def _lookup_transactions(part: list[str], url: str, session=None) -> list:
+    """One batch request of eth_getTransactionByHash; the answers in the order of `part` (None if not found)."""
+    payload = [
+        {"jsonrpc": "2.0", "id": j, "method": "eth_getTransactionByHash", "params": [h]} for j, h in enumerate(part)
+    ]
+    return rpc(url, payload, session)
 
 
 SELECTOR_TOKEN0, SELECTOR_TOKEN1 = "0x0dfe1681", "0xd21220a7"  # token0() and token1()
