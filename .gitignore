@@ -11,3 +11,4 @@ data/*
 
 # Downloaded papers stay local: the literature review links to the sources
 research/literature/papers/
+logs/

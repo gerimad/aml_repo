@@ -278,13 +278,132 @@ def download_window(start: int, n_blocks: int, out_dir: Path = DATA_DIR, workers
             print(f"{i}/{len(ranges)} {path.name}", flush=True)
 
 
-def load_swaps(data_dir: Path = DATA_DIR) -> pd.DataFrame:
-    """Load all downloaded chunks as one frame, in chain order."""
-    files = sorted((data_dir / "chunks").glob("swaps_*.parquet"))
-    if not files:
+def chunk_files(
+    data_dir: Path = DATA_DIR, first_block: int | None = None, last_block: int | None = None
+) -> list[Path]:
+    """The chunk files that lie inside blocks first_block..last_block, in block order.
+
+    The range of a chunk is read from its file name (swaps_<first>_<last>.parquet),
+    so no file is opened. With both bounds given, the chunks must cover the
+    range exactly, without gaps; otherwise a FileNotFoundError lists what is
+    missing. With no bounds, every chunk is returned.
+
+    Assumption: chunk files are never partial. download_chunk only gives a
+    file its final name after it is completely written.
+    """
+    files = list((data_dir / "chunks").glob("swaps_*.parquet"))
+    ranges = []
+    for path in files:
+        _, first, last = path.stem.split("_")
+        ranges.append((int(first), int(last), path))
+    ranges.sort()
+
+    if first_block is None and last_block is None:
+        selected = ranges
+    else:
+        if first_block is None or last_block is None:
+            raise ValueError("give both first_block and last_block, or neither")
+        selected = [r for r in ranges if r[0] >= first_block and r[1] <= last_block]
+        missing = missing_ranges([(f, l) for f, l, _ in selected], first_block, last_block)
+        if missing:
+            shown = ", ".join(f"{f:,}-{l:,}" for f, l in missing[:10])
+            raise FileNotFoundError(
+                f"blocks {first_block:,} to {last_block:,} are not fully downloaded; "
+                f"{len(missing)} missing range(s): {shown}"
+            )
+    if not selected:
         raise FileNotFoundError(f"no swap chunks in {data_dir}; run dex_swaps.py first")
+    return [path for _, _, path in selected]
+
+
+def missing_ranges(ranges: list[tuple[int, int]], first_block: int, last_block: int) -> list[tuple[int, int]]:
+    """Block ranges inside first_block..last_block that none of the given (first, last) ranges cover."""
+    missing = []
+    expected_next = first_block
+    for first, last in sorted(ranges):
+        if first > expected_next:
+            missing.append((expected_next, first - 1))
+        expected_next = max(expected_next, last + 1)
+    if expected_next <= last_block:
+        missing.append((expected_next, last_block))
+    return missing
+
+
+def load_swaps(
+    data_dir: Path = DATA_DIR, first_block: int | None = None, last_block: int | None = None
+) -> pd.DataFrame:
+    """Load the downloaded chunks as one frame, in chain order.
+
+    Without bounds every chunk is loaded (this is what notebooks 05 and 08
+    do). The project always passes its block range, so that the exploration
+    data is never loaded by accident; see chunk_files for the gap check.
+    """
+    files = chunk_files(data_dir, first_block, last_block)
     swaps = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
     return swaps.sort_values(["block", "tx_index", "log_index"], ignore_index=True)
+
+
+def validate_swaps(swaps: pd.DataFrame, pool_tokens: pd.DataFrame) -> pd.DataFrame:
+    """Data-quality checks per calendar week (ISO weeks, UTC). One row per week.
+
+    Columns:
+      week                       Monday of the week
+      days                       number of days of the week present in the data
+      swaps, users               number of swaps and of distinct signing accounts
+      blocks_with_swap           share of the blocks of the week (from its first to
+                                 its last block) that contain at least one swap
+      duplicate_events           swaps whose (tx_hash, log_index) occurs more than once
+      missing_values             number of empty cells in the core columns
+      swaps_with_known_tokens    share of swaps on a pool whose two tokens are known
+      swaps_per_day_min / _max   over the full days of the week
+      users_per_day_min / _max   over the full days of the week
+      low_days                   full days with fewer than half the week's median swaps
+      passed                     blocks_with_swap >= 0.98, no duplicates, no missing
+                                 values, swaps_with_known_tokens >= 0.999
+
+    Daily volumes are reported, not checked against a threshold, because
+    trading activity really does change from week to week. A "full day" is a
+    day whose first and last hour both contain swaps; the first and last day
+    of a download are usually partial.
+    """
+    core = ["block", "tx_index", "log_index", "timestamp", "tx_hash", "tx_from", "pool", "amount0", "amount1"]
+    known_pools = set(pool_tokens.dropna()["pool"])
+    frame = swaps[core].copy()
+    frame["week"] = frame["timestamp"].dt.tz_localize(None).dt.to_period("W-SUN").dt.start_time
+    frame["day"] = frame["timestamp"].dt.floor("D")
+    frame["hour"] = frame["timestamp"].dt.hour
+
+    rows = []
+    for week, part in frame.groupby("week", sort=True):
+        per_day = part.groupby("day").agg(
+            swaps=("block", "size"), users=("tx_from", "nunique"), first_hour=("hour", "min"), last_hour=("hour", "max")
+        )
+        full_days = per_day[(per_day["first_hour"] == 0) & (per_day["last_hour"] == 23)]
+        n_blocks = part["block"].max() - part["block"].min() + 1
+        median_swaps = full_days["swaps"].median() if len(full_days) else float("nan")
+        row = {
+            "week": week.date(),
+            "days": len(per_day),
+            "swaps": len(part),
+            "users": part["tx_from"].nunique(),
+            "blocks_with_swap": part["block"].nunique() / n_blocks,
+            "duplicate_events": int(part.duplicated(["tx_hash", "log_index"], keep=False).sum()),
+            "missing_values": int(part[core].isna().sum().sum()),
+            "swaps_with_known_tokens": part["pool"].isin(known_pools).mean(),
+            "swaps_per_day_min": full_days["swaps"].min(),
+            "swaps_per_day_max": full_days["swaps"].max(),
+            "users_per_day_min": full_days["users"].min(),
+            "users_per_day_max": full_days["users"].max(),
+            "low_days": int((full_days["swaps"] < 0.5 * median_swaps).sum()),
+        }
+        row["passed"] = bool(
+            row["blocks_with_swap"] >= 0.98
+            and row["duplicate_events"] == 0
+            and row["missing_values"] == 0
+            and row["swaps_with_known_tokens"] >= 0.999
+        )
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def main() -> None:

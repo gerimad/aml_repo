@@ -211,3 +211,92 @@ def test_download_window_and_main(tmp_path, monkeypatch, capsys):
 def test_load_swaps_without_data(tmp_path):
     with pytest.raises(FileNotFoundError):
         ds.load_swaps(tmp_path)
+
+
+# --------------------------------------------------------------------------
+# Loading a block range and validating it (work package 1)
+# --------------------------------------------------------------------------
+
+
+def write_empty_chunk(directory, first, last):
+    """Create a chunk file with the right name and one swap in its first block."""
+    (directory / "chunks").mkdir(parents=True, exist_ok=True)
+    row = {column: [0] for column in ds.SWAP_COLUMNS}
+    row["block"] = [first]
+    pd.DataFrame(row).to_parquet(directory / "chunks" / f"swaps_{first}_{last}.parquet")
+
+
+def test_chunk_files_returns_only_the_requested_range_in_block_order(tmp_path):
+    for first in (3000, 1000, 2000, 4000):
+        write_empty_chunk(tmp_path, first, first + 999)
+    files = ds.chunk_files(tmp_path, 1000, 2999)
+    assert [f.name for f in files] == ["swaps_1000_1999.parquet", "swaps_2000_2999.parquet"]
+
+
+def test_chunk_files_raises_and_names_the_gap(tmp_path):
+    write_empty_chunk(tmp_path, 1000, 1999)
+    write_empty_chunk(tmp_path, 3000, 3999)
+    with pytest.raises(FileNotFoundError, match="2,000-2,999"):
+        ds.chunk_files(tmp_path, 1000, 3999)
+
+
+def test_chunk_files_needs_both_bounds_or_none(tmp_path):
+    write_empty_chunk(tmp_path, 1000, 1999)
+    with pytest.raises(ValueError):
+        ds.chunk_files(tmp_path, first_block=1000)
+
+
+def test_missing_ranges():
+    assert ds.missing_ranges([(10, 19), (20, 29)], 10, 29) == []
+    assert ds.missing_ranges([(10, 19), (30, 39)], 10, 39) == [(20, 29)]
+    assert ds.missing_ranges([(20, 29)], 10, 35) == [(10, 19), (30, 35)]
+
+
+def test_load_swaps_reads_only_the_requested_range(tmp_path):
+    for first in (1000, 2000, 3000):
+        write_empty_chunk(tmp_path, first, first + 999)
+    swaps = ds.load_swaps(tmp_path, 2000, 3999)
+    assert swaps["block"].tolist() == [2000, 3000]
+
+
+def one_day_of_swaps(day: str, n_per_hour: int = 2):
+    """A clean day: n_per_hour swaps in every hour, each in its own block, on one known pool."""
+    times = pd.date_range(day, periods=24 * n_per_hour, freq=f"{60 // n_per_hour}min", tz="UTC")
+    n = len(times)
+    first_block = int(pd.Timestamp(day).timestamp()) // 12
+    return pd.DataFrame({
+        "block": range(first_block, first_block + n), "tx_index": 0, "log_index": 0, "timestamp": times,
+        "tx_hash": [f"{day}-{i}" for i in range(n)], "tx_from": [f"user{i % 5}" for i in range(n)],
+        "pool": "p", "amount0": 1.0, "amount1": -1.0,
+    })  # fmt: skip
+
+
+POOL_P = pd.DataFrame({"pool": ["p"], "token0": ["A"], "token1": ["B"]})
+
+
+def test_validate_swaps_passes_clean_data():
+    swaps = pd.concat([one_day_of_swaps("2026-07-06"), one_day_of_swaps("2026-07-07")], ignore_index=True)
+    swaps["block"] = range(1000, 1000 + len(swaps))  # every block of the week has a swap
+    report = ds.validate_swaps(swaps, POOL_P)
+    assert len(report) == 1, "both days are in the same ISO week"
+    week = report.iloc[0]
+    assert week["swaps"] == 96 and week["duplicate_events"] == 0 and week["missing_values"] == 0
+    assert week["swaps_per_day_min"] == 48 and week["users_per_day_max"] == 5
+    assert bool(week["passed"])
+
+
+def test_validate_swaps_counts_a_planted_duplicate_and_a_missing_value():
+    swaps = one_day_of_swaps("2026-07-06")
+    swaps = pd.concat([swaps, swaps.iloc[[3]]], ignore_index=True)  # the same event twice
+    swaps.loc[10, "tx_from"] = None
+    week = ds.validate_swaps(swaps, POOL_P).iloc[0]
+    assert week["duplicate_events"] == 2, "both copies of the duplicated event are counted"
+    assert week["missing_values"] == 1
+    assert not week["passed"]
+
+
+def test_validate_swaps_flags_unknown_pools():
+    swaps = one_day_of_swaps("2026-07-06")
+    swaps.loc[:4, "pool"] = "unknown"
+    week = ds.validate_swaps(swaps, POOL_P).iloc[0]
+    assert week["swaps_with_known_tokens"] < 0.999 and not week["passed"]
