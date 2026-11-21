@@ -38,6 +38,8 @@ from token_data import BURN_IN_END, DATA_END, PROJECT_DIR
 # Fixed definitions (implementation plan, section 1)
 # --------------------------------------------------------------------------
 
+RESULTS_DIR = Path(__file__).resolve().parents[2] / "results"  # small result tables, committed
+
 HORIZON = pd.Timedelta(days=2)  # the target: the two days after a point
 REFERENCE_DAYS = 14  # the baseline's history, and who is evaluated
 K = 10  # length of a recommendation list
