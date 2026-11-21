@@ -76,3 +76,21 @@ def test_infinite_half_life_gives_the_binary_history():
     task = pc.make_task(random_market(seed=5), T)
     weights = pr.time_weights(task.history_ages(14), half_life_days=None)
     assert (weights != task.history(14)).nnz == 0
+
+
+def test_fixed_blend_scorer_without_time_weights_is_the_wp3_blend():
+    task = pc.make_task(random_market(seed=2), T)
+    settings = {"k": 5, "shrink": 2.0, "weight": 0.4}
+    window = task.history(14)
+    grid = tuning.blend_grid(task, window, window, ks=[5], shrinks=[2.0], weights=[0.4])
+    per_user, _ = pc.evaluate_point(tuning.fixed_blend_scorer(task, settings), task)
+    assert per_user["recall"].mean() == pytest.approx(grid["recall"].iloc[0])
+
+
+def test_fixed_blend_scorer_with_an_infinite_half_life_on_14_days_is_the_wp3_blend():
+    task = pc.make_task(random_market(seed=2), T)
+    plain = {"k": 5, "shrink": 2.0, "weight": 0.4}
+    weighted = {**plain, "half_life": None, "history_days": 14}
+    a, _ = pc.evaluate_point(tuning.fixed_blend_scorer(task, plain), task)
+    b, _ = pc.evaluate_point(tuning.fixed_blend_scorer(task, weighted), task)
+    assert a["recall"].mean() == pytest.approx(b["recall"].mean())

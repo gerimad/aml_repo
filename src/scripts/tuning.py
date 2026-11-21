@@ -105,3 +105,22 @@ def grid_settings(**values) -> list[dict]:
     """All combinations of the given setting values, as a list of dicts."""
     names = list(values)
     return [dict(zip(names, combo)) for combo in itertools.product(*values.values())]
+
+
+def fixed_blend_scorer(task: pc.Task, settings: dict) -> pc.Scorer:
+    """The fixed combination as a protocol scorer, with or without time weighting.
+
+    settings: k, shrink, weight, and optionally half_life (days, None = no
+    weighting) and history_days (None = whole past). Without the last two it
+    is the WP3 model: popularity and neighbours on the 14-day window. With
+    them it is the WP4 model: the same weights 2^(-age / half_life) enter
+    popularity, similarity and the user's profile (project plan, section 6.3).
+    """
+    if "half_life" in settings:
+        matrix = pr.time_weights(task.history_ages(settings["history_days"]), settings["half_life"])
+    else:
+        matrix = task.history(pc.REFERENCE_DAYS)
+    popularity = pr.Popularity().fit(matrix)
+    neighbours = pr.ItemKNN(settings["k"], settings["shrink"]).fit(matrix)
+    blend = pr.Blend(popularity, neighbours, settings["weight"])
+    return lambda rows: blend.scores(matrix[rows])
