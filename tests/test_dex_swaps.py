@@ -165,16 +165,49 @@ def test_fetch_pool_tokens_handles_pools_that_do_not_answer(monkeypatch):
     assert node.calls == 2
 
 
+class FakeMulticallNode:
+    """Answers Multicall3 aggregate3 calls like the chain would: pool "0xdead..." is not a pool."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def post(self, url, json=None, timeout=None):
+        from eth_abi import decode, encode
+
+        self.calls += 1
+        data = bytes.fromhex(json["params"][0]["data"][10:])  # drop "0x" and the 4-byte selector
+        calls = decode(["(address,bool,bytes)[]"], data)[0]
+        answers = []
+        for target, _, call_data in calls:
+            if target.lower().startswith("0xdead"):
+                answers.append((False, b""))
+            else:
+                digit = "1" if "0x" + call_data.hex() == ds.SELECTOR_TOKEN0 else "2"
+                answers.append((True, bytes.fromhex(topic("0x" + digit * 40)[2:])))
+        return FakeResponse({"id": 1, "result": "0x" + encode(["(bool,bytes)[]"], [answers]).hex()})
+
+
+POOL_A, POOL_B, POOL_C = ("0x" + c * 40 for c in "abc")
+DEAD = "0xdead" + "0" * 36
+
+
+def test_fetch_pool_tokens_multicall_reads_both_tokens_and_marks_non_pools():
+    node = FakeMulticallNode()
+    tokens = ds.fetch_pool_tokens_multicall([POOL_A, DEAD, POOL_B], session=node, per_request=2).set_index("pool")
+    assert node.calls == 2, "three pools at two per request"
+    assert tokens.loc[POOL_A, "token0"] == "0x" + "1" * 40 and tokens.loc[POOL_A, "token1"] == "0x" + "2" * 40
+    assert tokens.loc[DEAD].isna().all(), "a contract that is not a pool gets no tokens"
+
+
 def test_load_pool_tokens_caches_and_extends(tmp_path, monkeypatch):
-    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
-    node, real_fetch = FakeTokenNode(), ds.fetch_pool_tokens
-    monkeypatch.setattr(ds, "fetch_pool_tokens", lambda pools: real_fetch(pools, session=node))
-    first = ds.load_pool_tokens(["0xaaa", "0xbbb"], tmp_path)
-    assert len(first) == 2 and node.calls == 2  # one request per pool
-    again = ds.load_pool_tokens(["0xaaa"], tmp_path)
-    assert len(again) == 1 and node.calls == 2  # served from the cache
-    more = ds.load_pool_tokens(["0xaaa", "0xccc"], tmp_path)
-    assert set(more["pool"]) == {"0xaaa", "0xccc"} and node.calls == 3
+    node, real_fetch = FakeMulticallNode(), ds.fetch_pool_tokens_multicall
+    monkeypatch.setattr(ds, "fetch_pool_tokens_multicall", lambda pools, session=None: real_fetch(pools, session=node))
+    first = ds.load_pool_tokens([POOL_A, POOL_B], tmp_path)
+    assert len(first) == 2 and node.calls == 1, "both pools in one request"
+    again = ds.load_pool_tokens([POOL_A], tmp_path)
+    assert len(again) == 1 and node.calls == 1, "served from the cache"
+    more = ds.load_pool_tokens([POOL_A, POOL_C], tmp_path)
+    assert set(more["pool"]) == {POOL_A, POOL_C} and node.calls == 2
     assert more["token0"].notna().all()
 
 

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from eth_abi import decode, encode
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "dex_swaps"
 LOGS_RPC = "https://eth.drpc.org"  # serves eth_getLogs for old blocks, 100 blocks per call
@@ -259,27 +260,67 @@ def _is_revert(answer: dict) -> bool:
     return error.get("code") == 3 or "revert" in str(error.get("message", "")).lower()
 
 
-def load_pool_tokens(
-    pools, data_dir: Path = DATA_DIR, block_size: int = 800, workers: int = 8
-) -> pd.DataFrame:
+MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"  # the same address on every EVM chain
+SELECTOR_AGGREGATE3 = "0x82ad56cb"  # aggregate3((address target, bool allowFailure, bytes callData)[])
+
+
+def fetch_pool_tokens_multicall(pools, url: str = TX_RPC, session=None, per_request: int = 200) -> pd.DataFrame:
+    """The two tokens of each pool, many pools per request: columns pool, token0, token1.
+
+    Uses the Multicall3 contract, which runs a list of calls inside one
+    eth_call and returns each call's success flag and answer. Every pool
+    gets two calls, token0() and token1(), both allowed to fail. A pool
+    whose calls fail or do not return one address (not a standard pool, or
+    destroyed) gets None in both columns, as in fetch_pool_tokens.
+
+    Reading the *current* state of a contract is not an archive request, so
+    the transaction endpoint serves it. A pool's tokens never change, so the
+    current state gives the tokens it had at every swap.
+    """
+    pools = list(dict.fromkeys(pools))
+    rows = []
+    for i in range(0, len(pools), per_request):
+        part = pools[i : i + per_request]
+        calls = [
+            (pool, True, bytes.fromhex(selector[2:]))
+            for pool in part
+            for selector in (SELECTOR_TOKEN0, SELECTOR_TOKEN1)
+        ]
+        data = SELECTOR_AGGREGATE3 + encode(["(address,bool,bytes)[]"], [calls]).hex()
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [{"to": MULTICALL3, "data": data}, "latest"]}
+        answers = decode(["(bool,bytes)[]"], bytes.fromhex(rpc(url, payload, session)[2:]))[0]
+        assert len(answers) == 2 * len(part), "Multicall3 answers every call"
+        for j, pool in enumerate(part):
+            (ok0, word0), (ok1, word1) = answers[2 * j], answers[2 * j + 1]
+            ok = ok0 and ok1 and len(word0) == 32 and len(word1) == 32
+            rows.append({
+                "pool": pool,
+                "token0": "0x" + word0[-20:].hex() if ok else None,
+                "token1": "0x" + word1[-20:].hex() if ok else None,
+            })  # fmt: skip
+    return pd.DataFrame(rows, columns=["pool", "token0", "token1"])
+
+
+def load_pool_tokens(pools, data_dir: Path = DATA_DIR, block_size: int = 2000, verbose: bool = False) -> pd.DataFrame:
     """Tokens of the given pools, from a local cache that is extended as needed.
 
-    Missing pools are fetched `block_size` at a time by `workers` threads,
-    and the cache is saved after each block, so an interrupted run loses little.
+    Missing pools are fetched with fetch_pool_tokens_multicall, `block_size`
+    at a time, and the cache is saved after each block, so an interrupted
+    run loses little. With verbose=True each block prints one progress line.
     """
     path = data_dir / "pool_tokens.parquet"
     columns = ["pool", "token0", "token1"]
     known = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
     have = set(known["pool"])
     missing = [pool for pool in dict.fromkeys(pools) if pool not in have]
+    session = requests.Session()
     for i in range(0, len(missing), block_size):
-        block = missing[i : i + block_size]
-        shares = [block[j::workers] for j in range(workers) if block[j::workers]]
-        with ThreadPoolExecutor(workers) as pool_of_threads:
-            fetched = list(pool_of_threads.map(fetch_pool_tokens, shares))
-        known = pd.concat([known, *fetched], ignore_index=True)
+        fetched = fetch_pool_tokens_multicall(missing[i : i + block_size], session=session)
+        known = pd.concat([known, fetched], ignore_index=True)
         path.parent.mkdir(parents=True, exist_ok=True)
         known.to_parquet(path)
+        if verbose:
+            print(f"  pool tokens: {min(i + block_size, len(missing)):,} of {len(missing):,} new pools looked up", flush=True)
     return known[known["pool"].isin(set(pools))].reset_index(drop=True)
 
 
