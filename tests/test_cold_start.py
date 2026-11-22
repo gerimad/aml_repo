@@ -77,3 +77,18 @@ def test_mixed_list_puts_young_tokens_first_and_keeps_the_rest_from_the_base_mod
     scores = factory(state, token_table(legs))(np.searchsorted(state.users, [1]))
     order = state.tokens[np.argsort(-scores[0])]
     assert order[0] == NEW_TOKEN
+
+
+def test_a_shared_factory_is_fitted_once_per_refresh_time():
+    legs = market()
+    fits = []
+
+    def counting_factory(state, tokens):
+        fits.append(state.t)
+        return cs.popularity_factory(state, tokens)
+
+    shared = cs.shared_across_models(counting_factory)
+    models = {f"mixed {n}": cs.mixed_factory(shared, max_age_hours=24, n_new=n) for n in (1, 2, 3)}
+    task = pc.make_task(legs, T)
+    cs.refreshed_evaluate(models, legs, task, token_table(legs), hours=12)
+    assert len(fits) == len(set(fits)), "the base model is fitted at most once per refresh time"

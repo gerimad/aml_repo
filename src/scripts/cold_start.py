@@ -208,3 +208,21 @@ def mixed_factory(base: RefreshFactory, max_age_hours: float, n_new: int) -> Ref
         return scorer
 
     return factory
+
+
+def shared_across_models(factory: RefreshFactory) -> RefreshFactory:
+    """The same factory, but fitted once per refresh time even when several models use it.
+
+    The mixed lists of several settings all start from the same base model.
+    Without this, refreshed_evaluate would refit the base model once per
+    setting at every refresh. The scorer of the latest refresh time is kept
+    and reused while the refresh time stays the same.
+    """
+    latest = {"t": None, "scorer": None}
+
+    def shared(state, tokens):
+        if latest["t"] != state.t:
+            latest["t"], latest["scorer"] = state.t, factory(state, tokens)
+        return latest["scorer"]
+
+    return shared
