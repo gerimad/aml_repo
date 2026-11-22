@@ -180,17 +180,30 @@ def newest_popular_factory(max_age_hours: float) -> RefreshFactory:
 
 
 def mixed_factory(base: RefreshFactory, max_age_hours: float, n_new: int) -> RefreshFactory:
+    """A list of the base model's best 10 - n_new tokens plus the n_new young tokens with the most users so far."""
+
+    def young_scores(state, tokens):
+        return newest_popular_scores(state, tokens, max_age_hours)
+
+    return mixed_with_young_scores(base, young_scores, n_new)
+
+
+def mixed_with_young_scores(
+    base: RefreshFactory, young_scores: Callable[[pc.Task, pd.DataFrame], np.ndarray], n_new: int
+) -> RefreshFactory:
     """A list of the base model's best 10 - n_new tokens plus the n_new best young tokens.
 
+    `young_scores(state, tokens)` gives one score per token of the universe,
+    the same for every user, positive only for tokens that count as young.
     The young tokens are chosen per user among those the user has not traded
     (so that exclusion of the past cannot remove them afterwards), and only
-    tokens with a positive newest-popular score are used: if fewer young
-    tokens exist, the base model fills the list.
+    tokens with a positive score are used: if fewer young tokens exist, the
+    base model fills the list.
     """
 
     def factory(state, tokens):
         base_scorer = base(state, tokens)
-        young = newest_popular_scores(state, tokens, max_age_hours)
+        young = young_scores(state, tokens)
 
         def scorer(rows):
             scores = base_scorer(rows)
@@ -226,3 +239,124 @@ def shared_across_models(factory: RefreshFactory) -> RefreshFactory:
         return latest["scorer"]
 
     return shared
+
+
+# --------------------------------------------------------------------------
+# The feature score for young tokens (implementation plan, 7.2 and 7.3)
+# --------------------------------------------------------------------------
+
+FEATURES = ["age_hours", "log_users_first_hour", "log_users_first_day", "launch_usdc", "launch_usdt", "launch_other"]
+
+
+class EarlyTrades:
+    """Each account's first trade of each token, with the token's launch time, for computing token features.
+
+    Built once from all legs. Features at a refresh time s only use rows with
+    time < s, so nothing after s enters them.
+    """
+
+    def __init__(self, legs: pd.DataFrame, tokens: pd.DataFrame):
+        first = legs.groupby(["token", "user"], observed=True)["timestamp"].min().rename("time").reset_index()
+        launch = tokens.set_index("token_id")["first_timestamp"]
+        first["since_launch"] = first["time"] - first["token"].map(launch)
+        self.first = first
+        bases = tokens.set_index("token_id")
+        symbol_of_base = bases.loc[bases["is_base"], "symbol"]
+        self.launch_currency = bases["launch_base_id"].map(symbol_of_base).fillna("other")
+
+
+def young_token_features(state: pc.Task, tokens: pd.DataFrame, early: EarlyTrades, max_age_hours: float) -> pd.DataFrame:
+    """Features at the refresh time of every token of the universe younger than max_age_hours.
+
+    Index: the token's column in the state's universe. Columns: FEATURES.
+    Counts are distinct accounts in the token's first hour and first day,
+    counted only up to the refresh time (a token 3 hours old has had 3 hours).
+    The launch currency is WETH (the reference), USDC, USDT or other.
+    """
+    ages = token_ages_hours(state, tokens)
+    columns = np.flatnonzero(ages < max_age_hours)
+    ids = state.tokens[columns]
+    first = early.first[early.first["token"].isin(ids) & (early.first["time"] < state.t)]
+    hour = first[first["since_launch"] < pd.Timedelta(hours=1)].groupby("token").size()
+    day = first[first["since_launch"] < pd.Timedelta(hours=24)].groupby("token").size()
+    currency = early.launch_currency.reindex(ids).fillna("other").to_numpy()
+    return pd.DataFrame(
+        {
+            "age_hours": ages[columns],
+            "log_users_first_hour": np.log1p(hour.reindex(ids, fill_value=0).to_numpy()),
+            "log_users_first_day": np.log1p(day.reindex(ids, fill_value=0).to_numpy()),
+            "launch_usdc": (currency == "USDC").astype(float),
+            "launch_usdt": (currency == "USDT").astype(float),
+            "launch_other": (currency == "other").astype(float),
+        },
+        index=pd.Index(columns, name="column"),
+    )
+
+
+def feature_training_rows(
+    legs: pd.DataFrame, task: pc.Task, tokens: pd.DataFrame, early: EarlyTrades, hours: float, max_age_hours: float
+) -> pd.DataFrame:
+    """Training rows for the feature score at one evaluation point: one row per (refresh time, young token).
+
+    At each refresh time s of the refreshed protocol, for every young token:
+    its features at s, `picked`: the evaluated accounts whose first trade of
+    the token falls in [s, s + hours) (the pairs a list built at s is judged
+    on), and `not_picked`: the other evaluated accounts that had not traded
+    it before s.
+    """
+    pairs = first_trades_in_target(legs, task)
+    evaluated = task.users[task.eval_rows]
+    rows = []
+    for s in refresh_times(task.t, hours):
+        state = pc.make_task(legs, s) if s > task.t else task
+        features = young_token_features(state, tokens, early, max_age_hours)
+        if features.empty:
+            continue
+        ids = state.tokens[features.index]
+        due = pairs[(pairs["first_time"] >= s) & (pairs["first_time"] < s + pd.Timedelta(hours=hours))]
+        picked = due.groupby("token").size().reindex(ids, fill_value=0).to_numpy()
+        evaluated_rows = np.searchsorted(state.users, evaluated)
+        traded_before = np.asarray(state.past[evaluated_rows][:, features.index].sum(axis=0)).ravel()
+        features = features.assign(
+            point=task.t, refresh=s, token=ids, picked=picked, not_picked=len(evaluated) - traded_before - picked
+        )
+        rows.append(features.reset_index(drop=True))
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
+def fit_feature_score(training: pd.DataFrame):
+    """Logistic regression of "an evaluated account picks the token up" on the token features.
+
+    Each training row stands for `picked` positive and `not_picked` negative
+    (account, token) pairs, so it enters twice, weighted by those counts.
+    Features are standardized first. Returns the fitted sklearn pipeline.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    x = pd.concat([training[FEATURES], training[FEATURES]], ignore_index=True)
+    y = np.r_[np.ones(len(training)), np.zeros(len(training))]
+    weight = np.r_[training["picked"].to_numpy(), training["not_picked"].to_numpy()].astype(float)
+    keep = weight > 0
+    model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+    model.fit(x[keep], y[keep], logisticregression__sample_weight=weight[keep])
+    return model
+
+
+def feature_scores(state: pc.Task, tokens: pd.DataFrame, early: EarlyTrades, model, max_age_hours: float) -> np.ndarray:
+    """One score per token of the universe: the model's pick-up probability if young, else 0."""
+    scores = np.zeros(len(state.tokens))
+    features = young_token_features(state, tokens, early, max_age_hours)
+    if not features.empty:
+        scores[features.index] = model.predict_proba(features[FEATURES])[:, 1]
+    return scores
+
+
+def feature_mixed_factory(base: RefreshFactory, early: EarlyTrades, model, max_age_hours: float, n_new: int) -> RefreshFactory:
+    """The mixed list with the feature score in place of newest-popular (implementation plan, 7.3)."""
+
+    def young_scores(state, tokens):
+        return feature_scores(state, tokens, early, model, max_age_hours)
+
+    return mixed_with_young_scores(base, young_scores, n_new)
