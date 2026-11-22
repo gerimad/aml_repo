@@ -132,3 +132,17 @@ def test_point_rows_cache_refuses_other_settings(tmp_path):
     pd.testing.assert_frame_equal(first, again)
     with pytest.raises(ValueError, match="delete it to rebuild"):
         rk.point_rows(legs, tokens, task, {**SETTINGS, "k": 99}, cache_dir=tmp_path)
+
+
+def test_sample_users_keeps_every_row_of_the_chosen_accounts():
+    rows = pd.DataFrame({"point": [1] * 6 + [2] * 2, "user": [1, 1, 2, 2, 3, 3, 9, 9], "label": [0] * 8})
+    sampled = rk.sample_users(rows, per_point=2, seed=0)
+    assert sampled[sampled["point"] == 1]["user"].nunique() == 2
+    assert (sampled.groupby(["point", "user"]).size() == 2).all(), "an account keeps all its candidates"
+    assert set(sampled[sampled["point"] == 2]["user"]) == {9}
+
+
+def test_features_are_stored_as_float32():
+    legs, task, stage = setup()
+    table = rk.features(stage, rk.candidates(stage, task.eval_rows), legs, token_table(legs))
+    assert (table[rk.ALL_FEATURES].dtypes == np.float32).all()

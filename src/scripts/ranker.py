@@ -217,7 +217,8 @@ def features(stage: FirstStage, pairs: pd.DataFrame, legs: pd.DataFrame, tokens:
     for name in context.columns:
         out[name] = context[name].to_numpy()[cols]
 
-    out["label"] = np.asarray(task.new[rows, cols]).ravel().astype(int)
+    out[ALL_FEATURES] = out[ALL_FEATURES].astype(np.float32)  # half the memory of float64; plenty of precision
+    out["label"] = np.asarray(task.new[rows, cols]).ravel().astype(np.int8)
     out.insert(0, "point", task.t)
     out.insert(1, "user", task.users[rows])
     return out
@@ -266,6 +267,23 @@ def sample_negatives(rows: pd.DataFrame, per_user: int = 50, seed: int = 0) -> p
             negatives = rng.choice(negatives, per_user, replace=False)
         keep[negatives] = True
     return rows[keep].reset_index(drop=True)
+
+
+def sample_users(rows: pd.DataFrame, per_point: int = 2000, seed: int = 0) -> pd.DataFrame:
+    """All candidate rows of at most `per_point` random accounts of each point.
+
+    Used to validate on held-out points without holding every row in
+    memory: the mean recall over a random sample of accounts is an unbiased
+    estimate of the mean over all of them.
+    """
+    rng = np.random.default_rng(seed)
+    keep = []
+    for _, part in rows.groupby("point"):
+        users = part["user"].unique()
+        if len(users) > per_point:
+            users = rng.choice(users, per_point, replace=False)
+        keep.append(part[part["user"].isin(users)])
+    return pd.concat(keep, ignore_index=True)
 
 
 # --------------------------------------------------------------------------
@@ -357,6 +375,8 @@ def cv_over_points(
     training and the validation part of a fold.
     """
     points = sorted(rows["point"].unique())
+    validated_users = pd.MultiIndex.from_frame(rows[["point", "user"]].drop_duplicates())
+    positives = positives[positives.index.isin(validated_users)]  # only the accounts present in `rows`
     scores = []
     for held_out in point_folds(points):
         train = train_rows[~train_rows["point"].isin(held_out)]
