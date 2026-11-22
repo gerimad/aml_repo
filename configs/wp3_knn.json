@@ -1,7 +1,7 @@
 {
-  "k": 200,
-  "shrink": 50.0,
+  "k": 400,
+  "shrink": 200.0,
   "weight": 0.5,
   "chosen_on": "dev_a",
-  "mean_recall_dev_a": 0.1904
+  "mean_recall_dev_a": 0.2017
 }

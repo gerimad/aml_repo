@@ -259,6 +259,31 @@ def head_tokens(window: sparse.csr_matrix, share: float = 1 / 3) -> np.ndarray:
     return order[:n_head]
 
 
+def same_history_groups(task: Task, min_size: int = 20) -> pd.DataFrame:
+    """Groups of at least `min_size` evaluated users with exactly the same token set in the reference window.
+
+    Large groups like this are usually farms of automated accounts that trade
+    together, so they say how much of a point's recall can come from a few
+    coordinated groups. Returns one row per group, largest first: size, the
+    number of tokens in the shared set, and the share of the group's
+    positive pairs taken by its most common target token.
+    """
+    window = task.history(REFERENCE_DAYS)[task.eval_rows]
+    token_sets = pd.Series([tuple(window[i].indices) for i in range(window.shape[0])])
+    sizes = token_sets.value_counts()
+    rows = []
+    for token_set, size in sizes[sizes >= min_size].items():
+        members = np.flatnonzero((token_sets == token_set).to_numpy())
+        targets = np.asarray(task.new[task.eval_rows][members].sum(axis=0)).ravel()
+        positives = targets.sum() + task.cold_new[task.eval_rows][members].sum()
+        rows.append({
+            "size": int(size),
+            "tokens_in_set": len(token_set),
+            "top_target_share": float(targets.max() / positives) if positives else 0.0,
+        })
+    return pd.DataFrame(rows, columns=["size", "tokens_in_set", "top_target_share"])
+
+
 def history_group(window_size: np.ndarray) -> np.ndarray:
     """The history-size group of each user: "1", "2-4" or "5+" tokens in the reference window."""
     return np.select([window_size <= 1, window_size <= 4], ["1", "2-4"], "5+")

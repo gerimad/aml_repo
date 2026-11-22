@@ -123,3 +123,17 @@ def test_run_refits_at_each_point_and_summarizes(tmp_path, monkeypatch):
     assert result.per_point["point"].tolist() == [T, later]
     assert set(result.per_user["point"]) == {T, later}
     assert {"recall", "recall_low", "coverage", "recall_no_head", "recall_1"} <= set(result.per_point.columns)
+
+
+def test_same_history_groups_finds_a_farm_of_identical_accounts():
+    # Users 0-24 each traded token 1 before T and all buy token 2 after T: a farm of 25.
+    # Users 100-104 traded token 3 and buy token 4: a group of 5, below min_size.
+    # User 200 trades tokens 2 and 4 before T, so they exist at T (are not cold).
+    rows = [(T - 5 * DAY, 200, 2), (T - 5 * DAY, 200, 4)]
+    for user in range(25):
+        rows += [(T - 3 * DAY, user, 1), (T + DAY, user, 2)]
+    for user in range(100, 105):
+        rows += [(T - 3 * DAY, user, 3), (T + DAY, user, 4)]
+    task = pc.make_task(legs(rows), T)
+    groups = pc.same_history_groups(task, min_size=20)
+    assert groups.to_dict("records") == [{"size": 25, "tokens_in_set": 1, "top_target_share": 1.0}]
