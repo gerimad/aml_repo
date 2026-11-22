@@ -1,0 +1,5 @@
+model,refresh_hours,point,part,users,recall,cold_pairs,cold_reached
+"baseline, refreshed",48,2026-07-22 00:00:00+00:00,dev_b,5117,0.10456369343108272,2502,0.0
+newest-popular,48,2026-07-22 00:00:00+00:00,dev_b,5117,0.012721824513401609,2502,0.0
+"time-weighted blend, refreshed",48,2026-07-22 00:00:00+00:00,dev_b,5117,0.14387851922864708,2502,0.0
+mixed list,48,2026-07-22 00:00:00+00:00,dev_b,5117,0.15024874474487782,2502,0.0
