@@ -122,3 +122,13 @@ def test_a_saved_model_predicts_the_same_after_loading(tmp_path, kind, params):
     rk.save_model(model, tmp_path / "model")
     again = rk.load_model(tmp_path / "model", kind)
     assert np.allclose(rk.predict(model, rows, rk.ALL_FEATURES), rk.predict(again, rows, rk.ALL_FEATURES))
+
+
+def test_point_rows_cache_refuses_other_settings(tmp_path):
+    legs, task, stage = setup()
+    tokens = token_table(legs)
+    first = rk.point_rows(legs, tokens, task, SETTINGS, cache_dir=tmp_path)
+    again = rk.point_rows(legs, tokens, task, SETTINGS, cache_dir=tmp_path)
+    pd.testing.assert_frame_equal(first, again)
+    with pytest.raises(ValueError, match="delete it to rebuild"):
+        rk.point_rows(legs, tokens, task, {**SETTINGS, "k": 99}, cache_dir=tmp_path)

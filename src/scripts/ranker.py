@@ -224,17 +224,36 @@ def features(stage: FirstStage, pairs: pd.DataFrame, legs: pd.DataFrame, tokens:
 
 
 def point_rows(legs, tokens, task: pc.Task, settings: dict, cache_dir: Path | None = PROJECT_DIR / "ranker") -> pd.DataFrame:
-    """Candidates with features and labels for every evaluated user of one point, cached as Parquet."""
+    """Candidates with features and labels for every evaluated user of one point, cached as Parquet.
+
+    The rows depend on the first-stage settings, so the cache folder records
+    them in settings.json and refuses to be used with different ones: delete
+    the folder (or pass another cache_dir) after changing a setting.
+    """
     if cache_dir is not None:
+        _check_cache_settings(cache_dir, settings)
         path = cache_dir / f"rows_{task.t:%Y%m%d}.parquet"
         if path.exists():
             return pd.read_parquet(path)
     stage = FirstStage(task, settings)
     table = features(stage, candidates(stage, task.eval_rows), legs, tokens)
     if cache_dir is not None:
-        cache_dir.mkdir(parents=True, exist_ok=True)
         table.to_parquet(path)
     return table
+
+
+def _check_cache_settings(cache_dir: Path, settings: dict) -> None:
+    """Write settings.json into a new cache folder; raise if an existing one holds other settings."""
+    import json
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    record = cache_dir / "settings.json"
+    if record.exists():
+        stored = json.loads(record.read_text())
+        if stored != settings:
+            raise ValueError(f"{cache_dir} holds rows for settings {stored}, not {settings}; delete it to rebuild")
+    else:
+        record.write_text(json.dumps(settings, indent=2))
 
 
 def sample_negatives(rows: pd.DataFrame, per_user: int = 50, seed: int = 0) -> pd.DataFrame:
