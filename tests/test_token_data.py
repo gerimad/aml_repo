@@ -88,11 +88,12 @@ def test_symbol_names_known_tokens_and_shortens_the_rest():
 def test_merge_week_rows_combines_two_halves_of_a_week():
     halves = pd.DataFrame({
         "week": ["2026-07-06", "2026-07-06"], "days": [4, 4], "swaps": [100, 300], "users": [10, 20],
-        "blocks_with_swap": [1.0, 0.98], "duplicate_events": [0, 0], "missing_values": [0, 0],
+        "blocks_with_swap": [1.0, 0.98], "longest_gap_blocks": [2, 3], "duplicate_events": [0, 0], "missing_values": [0, 0],
         "swaps_with_known_tokens": [1.0, 1.0], "swaps_per_day_min": [20, 40], "swaps_per_day_max": [30, 80],
         "users_per_day_min": [3, 5], "users_per_day_max": [8, 9], "low_days": [0, 1], "passed": [True, True],
     })  # fmt: skip
     week = td.merge_week_rows(halves).iloc[0]
     assert week["days"] == 7 and week["swaps"] == 400
     assert np.isclose(week["blocks_with_swap"], 0.25 * 1.0 + 0.75 * 0.98)
+    assert week["longest_gap_blocks"] == 3
     assert week["swaps_per_day_min"] == 20 and week["swaps_per_day_max"] == 80 and week["low_days"] == 1

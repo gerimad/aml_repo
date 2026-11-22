@@ -315,7 +315,15 @@ def test_validate_swaps_passes_clean_data():
     week = report.iloc[0]
     assert week["swaps"] == 96 and week["duplicate_events"] == 0 and week["missing_values"] == 0
     assert week["swaps_per_day_min"] == 48 and week["users_per_day_max"] == 5
+    assert week["longest_gap_blocks"] == 0
     assert bool(week["passed"])
+
+
+def test_validate_swaps_reports_the_longest_run_of_blocks_without_a_swap():
+    swaps = one_day_of_swaps("2026-07-06")
+    swaps["block"] = range(1000, 1000 + len(swaps))
+    swaps.loc[10:, "block"] += 150  # 150 blocks without any swap, as if one log request came back empty
+    assert ds.validate_swaps(swaps, POOL_P).iloc[0]["longest_gap_blocks"] == 150
 
 
 def test_validate_swaps_counts_a_planted_duplicate_and_a_missing_value():

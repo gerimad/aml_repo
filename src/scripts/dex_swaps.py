@@ -32,6 +32,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 from eth_abi import decode, encode
@@ -429,6 +430,10 @@ def validate_swaps(swaps: pd.DataFrame, pool_tokens: pd.DataFrame) -> pd.DataFra
       swaps, users               number of swaps and of distinct signing accounts
       blocks_with_swap           share of the blocks of the week (from its first to
                                  its last block) that contain at least one swap
+      longest_gap_blocks         the longest run of consecutive blocks without any swap.
+                                 Logs are fetched 100 blocks per request, so a request
+                                 that wrongly came back empty would leave a gap of at
+                                 least 100 blocks; single empty blocks are normal.
       duplicate_events           swaps whose (tx_hash, log_index) occurs more than once
       missing_values             number of empty cells in the core columns
       swaps_with_known_tokens    share of swaps on a pool whose two tokens are known
@@ -464,6 +469,7 @@ def validate_swaps(swaps: pd.DataFrame, pool_tokens: pd.DataFrame) -> pd.DataFra
             "swaps": len(part),
             "users": part["tx_from"].nunique(),
             "blocks_with_swap": part["block"].nunique() / n_blocks,
+            "longest_gap_blocks": int((np.diff(np.unique(part["block"].to_numpy())) - 1).max(initial=0)),
             "duplicate_events": int(part.duplicated(["tx_hash", "log_index"], keep=False).sum()),
             "missing_values": int(part[core].isna().sum().sum()),
             "swaps_with_known_tokens": part["pool"].isin(known_pools).mean(),

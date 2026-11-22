@@ -313,6 +313,7 @@ def merge_week_rows(validation: pd.DataFrame) -> pd.DataFrame:
             "days": part["days"].sum() - (len(part) - 1),  # a split day is counted in both halves
             "swaps": part["swaps"].sum(),
             "blocks_with_swap": (part["blocks_with_swap"] * weights).sum(),
+            "longest_gap_blocks": part["longest_gap_blocks"].max(),
             "duplicate_events": part["duplicate_events"].sum(),
             "missing_values": part["missing_values"].sum(),
             "swaps_with_known_tokens": (part["swaps_with_known_tokens"] * weights).sum(),
