@@ -193,7 +193,20 @@ def select(signal: pd.DataFrame, version: str, k: int, weighting: str = "account
 # --------------------------------------------------------------------------
 
 
-def launch_table(prices: pd.DataFrame, s: pd.Timestamp, min_age_hours: float = 0.25, max_age_hours: float = 6) -> pd.DataFrame:
+def launch_times(prices: pd.DataFrame) -> pd.Series:
+    """Each token's launch: its first priced swap. Computed once over all prices, so that launch_table need not.
+
+    Assumption: a token's first priced swap in the data is its launch. For
+    tokens traded before the data starts (18 June) this is too late, but they
+    are never young at a decision time after 25 June, so the launch universe
+    (at most 6 hours old) never contains them.
+    """
+    return prices.groupby("token", observed=True)["timestamp"].min()
+
+
+def launch_table(
+    prices: pd.DataFrame, s: pd.Timestamp, min_age_hours: float = 0.25, max_age_hours: float = 6, launch: pd.Series | None = None
+) -> pd.DataFrame:
     """Tokens between min_age_hours and max_age_hours old at s, with their order flow, from priced swaps before s.
 
     A token's launch is its first priced swap (against a base currency).
@@ -202,7 +215,9 @@ def launch_table(prices: pd.DataFrame, s: pd.Timestamp, min_age_hours: float = 0
     buy_share_1h (share of the last hour's swaps that are buys), buy_eth_since_launch.
     """
     since = prices[(prices["timestamp"] >= s - pd.Timedelta(hours=max_age_hours + 1)) & (prices["timestamp"] < s)]
-    launch = prices[prices["timestamp"] < s].groupby("token")["timestamp"].min()
+    if launch is None:
+        launch = launch_times(prices[prices["timestamp"] < s])
+    launch = launch[launch < s]
     age = (s - launch).dt.total_seconds() / 3600
     young = age[(age >= min_age_hours) & (age <= max_age_hours)].index
     flow = since[since["token"].isin(young)]

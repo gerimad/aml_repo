@@ -1,6 +1,7 @@
 """Tests for src/scripts/strategy.py: the selection rules, on hand-made signal tables."""
 
 import numpy as np
+import pytest
 import pandas as pd
 
 import strategy as st
@@ -93,3 +94,22 @@ def test_unexplained_flow_prefers_visible_demand_the_model_did_not_predict():
     rows = [(1, 50, 60, 30, 48, True), (2, 0, 40, 30, 48, True)]
     # token 1: 60 / 51; token 2: 40 / 1 -> token 2
     assert st.select(signal(rows), "unexplained_flow", k=1)["token"].tolist() == [2]
+
+
+def test_launch_table_counts_order_flow_of_young_tokens_only():
+    t = pd.Timestamp("2026-08-13 12:00", tz="UTC")
+    rows = []
+    # Token A launched 2 hours before t; 3 buyers since launch, 2 of them in the last hour, plus one seller.
+    for minutes, who, side in [(-120, "u1", "buy"), (-50, "u2", "buy"), (-20, "u3", "buy"), (-10, "u4", "sell")]:
+        rows.append({"timestamp": t + pd.Timedelta(minutes=minutes), "tx_from": who, "side": side, "volume_eth": 1.0, "token": "A", "pool": "pA"})
+    # Token B launched 3 days before t: too old.
+    rows.append({"timestamp": t - pd.Timedelta(days=3), "tx_from": "u1", "side": "buy", "volume_eth": 1.0, "token": "B", "pool": "pB"})
+    rows.append({"timestamp": t - pd.Timedelta(minutes=5), "tx_from": "u5", "side": "buy", "volume_eth": 1.0, "token": "B", "pool": "pB"})
+    prices = pd.DataFrame(rows)
+    table = st.launch_table(prices, t).set_index("token")
+    assert list(table.index) == ["A"]
+    assert table.loc["A", "buyers_since_launch"] == 3 and table.loc["A", "buyers_1h"] == 2
+    assert table.loc["A", "buy_share_1h"] == pytest.approx(2 / 3)
+    assert table.loc["A", "age_hours"] == pytest.approx(2.0)
+    with_launch = st.launch_table(prices, t, launch=st.launch_times(prices)).set_index("token")
+    pd.testing.assert_frame_equal(table, with_launch)
