@@ -87,3 +87,9 @@ def test_the_signal_does_not_change_when_everything_after_the_decision_time_is_d
     cut = st.signal_table(past_legs, past_prices, past_tokens, users, S, settings)
     assert len(full) > 0
     pd.testing.assert_frame_equal(full.reset_index(drop=True), cut.reset_index(drop=True))
+
+
+def test_unexplained_flow_prefers_visible_demand_the_model_did_not_predict():
+    rows = [(1, 50, 60, 30, 48, True), (2, 0, 40, 30, 48, True)]
+    # token 1: 60 / 51; token 2: 40 / 1 -> token 2
+    assert st.select(signal(rows), "unexplained_flow", k=1)["token"].tolist() == [2]

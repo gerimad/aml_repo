@@ -77,3 +77,28 @@ def test_daily_returns_count_a_decision_without_positions_as_zero():
     ])  # fmt: skip
     daily = bt.daily_returns(trades)
     assert daily.iloc[0] == pytest.approx((0.04 + 0.0) / 2)
+
+
+LADDER = bt.Settings(holding_hours=1, gas_gwei=0, take_profit=(5, 20), min_trigger_eth=0.05)
+
+
+def test_the_ladder_sells_half_at_each_level_at_the_next_sell():
+    swaps = priced([(0, 10, "buy", 1.0, 1), (1, 11, "buy", 1.0, 1),
+                    (5, 12, "sell", 6.0, 1), (6, 13, "sell", 5.5, 1),      # 5x reached; next sell at 5.5
+                    (20, 14, "sell", 25.0, 1), (21, 15, "sell", 22.0, 1)])  # 20x reached; next sell at 22  # fmt: skip
+    trades = bt.run(selection(), bt.PoolPrices(swaps), LADDER)
+    assert trades["exit_price"].iloc[0] == pytest.approx((5.5 + 22.0) / 2)
+
+
+def test_a_tiny_swap_at_an_absurd_price_does_not_trigger_the_ladder():
+    swaps = priced([(0, 10, "buy", 1.0, 1), (1, 11, "buy", 1.0, 1),
+                    (5, 12, "sell", 100.0, 0.001), (6, 13, "sell", 1.0, 1),
+                    (70, 20, "sell", 2.0, 1)])  # fmt: skip
+    trades = bt.run(selection(), bt.PoolPrices(swaps), LADDER)
+    assert trades["exit_price"].iloc[0] == pytest.approx(2.0), "no trigger: both halves leave at the time limit"
+
+
+def test_a_level_reached_without_a_later_buyer_is_worth_zero_for_that_half():
+    swaps = priced([(0, 10, "buy", 1.0, 1), (1, 11, "buy", 1.0, 1), (5, 12, "sell", 6.0, 1)])
+    trades = bt.run(selection(), bt.PoolPrices(swaps), LADDER)
+    assert trades["exit_price"].iloc[0] == pytest.approx(0.0)

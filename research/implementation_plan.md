@@ -574,6 +574,14 @@ an exact impact is optional (12.7).
 | Position cap | 1% of the pool's 24-hour buy volume (fixed, not tuned) |
 | Signal version | surprise (predicted ÷ visible, as planned); **filtered visible demand**: the $3K$ tail tokens with the most buyers in the last 24 hours, of which the $K$ with the highest predicted demand (added 23 November 2026, before any tuning; see below) |
 
+A third tail version, **unexplained flow**: the $K$ tokens with the most visible
+demand relative to the predicted, visible ÷ (1 + predicted), added on 23
+November 2026 before any tuning. Demand the recommender did not expect is
+either an outside catalyst (which may continue) or a push (which may collapse,
+the hypothesis of WP13); the backtest measures which dominates. A finer
+version, asking for each recent buyer whether the token was expected for that
+account (WP9's rank percentile), follows after WP9.
+
 The second version was added after the explorer page showed, on six test
 decision times and without prices, that tail tokens picked by visible demand
 get more new buyers than tokens picked by predicted demand or surprise
@@ -631,3 +639,45 @@ mostly in coordinated groups, and every benchmark.
 | Freeze (`configs/wp8_frozen.json`, tag `strategy-freeze`), then `run_backtest.py` on the held-out days once; notebook `19_backtest_heldout.ipynb` reads `results/wp8/heldout/` only | the verdict of 12.6 | 1 day |
 | Optional: `Sync`/`slot0` download for exact price impact | re-run of 18 and 19 with exact impact, reported next to the estimate | 4–18 h unattended |
 
+
+### 12.8 A third version: launch momentum (added 23 November 2026, before any tuning)
+
+A strategy for the fat tail of new tokens: many tiny positions in tokens a few
+hours old, picked by their order flow, so that a rare large winner pays for
+the many losers. It does not use the recommender's lists; it is tested here
+because the same data, protocol and accounting answer whether it works. It is
+reported next to the tail strategy, with its own benchmark and criterion.
+
+| Part | Rule |
+| --- | --- |
+| Decision times | every hour |
+| Universe | tokens between 15 minutes and 6 hours old at the decision time, with a WETH, USDC or USDT pool and at least $N$ distinct buyers since launch |
+| Signal | distinct new buyers in the last hour; buy share of the last hour's trades |
+| Selection | the $K$ tokens with the most buyers in the last hour among those with a buy share of at least $b$; a token is bought at most once |
+| Size | tiny and equal: a fixed fraction of the sleeve per position, set from half-Kelly on development data; capped at 1% of the pool's buy volume since launch |
+| Exit | a take-profit ladder: sell half after a sell price of $m_1$ × entry, the rest after $m_2$ × entry or at the time limit $H$; prices only count as a trigger on swaps of at least 0.05 ETH (one tiny swap at an absurd price is not a 100×); the sale is at the next sell swap after the trigger, not at the trigger level |
+| Costs | as in 12.2; a position whose remainder finds no sell swap within $H$ + 24 hours is worth zero for that remainder |
+
+Settings tuned on development data: $N \in \{10, 30\}$, $b \in \{0.5, 0.7\}$,
+$K \in \{1, 3\}$ per hour, $H \in \{6, 24, 72\}$ hours,
+$(m_1, m_2) \in \{(3, 10), (5, 20), \text{none}\}$.
+
+**Benchmark:** random tokens from the same universe at the same times
+(`launch_random`), with the same sizes and exits. It isolates whether the
+order flow picks better than chance among new tokens.
+
+**Indicators:** Sharpe misjudges a strategy built on rare large gains, so the
+indicators of 12.6 are joined by **log growth** (mean daily $\ln(1 + r)$, the
+growth rate that compounds, with a bootstrap interval over days), mean
+against median position return, skewness, the share of the total profit from
+the best 1% and 5% of positions, the longest run of losing positions, and the
+probability of ending the period below the start (from resampled days).
+
+**Success criterion (stated now):** on the 42 held-out days, (a) the mean daily
+log growth of the strategy's portfolio is positive with a 95% bootstrap
+interval over days that excludes zero, and (b) it beats `launch_random` by the
+same test on the daily difference. With few large winners the interval will
+be wide; a result that depends on two or three tokens is reported as such.
+
+**Later, with WP10:** the share of a token's buyers in farm groups as a filter
+(farms buy together and sell together).

@@ -190,3 +190,91 @@ def report(trades: pd.DataFrame, holding_hours: float, column: str = "net_return
         "capacity_eth": float(entered["size_eth"].sum() / max(trades["decision"].nunique(), 1)),
         "skipped_decisions": int(equity.attrs["skipped"]),
     }
+
+
+# --------------------------------------------------------------------------
+# Indicators for a strategy built on rare large gains (implementation plan 12.8)
+# --------------------------------------------------------------------------
+
+
+def log_growth(daily: pd.Series, resamples: int = 10_000, seed: int = 0) -> tuple[float, float, float]:
+    """Mean daily ln(1 + r), the rate at which the portfolio compounds, with its 95% bootstrap interval over days."""
+    logs = np.log1p(daily.to_numpy())
+    rng = np.random.default_rng(seed)
+    means = rng.choice(logs, size=(resamples, len(logs)), replace=True).mean(axis=1)
+    low, high = np.percentile(means, [2.5, 97.5])
+    return float(logs.mean()), float(low), float(high)
+
+
+def probability_of_loss(daily: pd.Series, resamples: int = 10_000, seed: int = 0) -> float:
+    """Share of resampled periods (same number of days, days drawn with replacement) that end below the start."""
+    rng = np.random.default_rng(seed)
+    logs = np.log1p(daily.to_numpy())
+    totals = rng.choice(logs, size=(resamples, len(logs)), replace=True).sum(axis=1)
+    return float((totals < 0).mean())
+
+
+def top_share(returns: pd.Series, share: float) -> float:
+    """Share of the total profit (sum of position returns) that comes from the best `share` of positions; NaN if the total is not positive."""
+    total = returns.sum()
+    if total <= 0 or returns.empty:
+        return float("nan")
+    n = max(1, int(math.ceil(share * len(returns))))
+    return float(returns.nlargest(n).sum() / total)
+
+
+def longest_losing_run(returns: pd.Series) -> int:
+    """The longest run of consecutive losing positions, in the order given (entry time)."""
+    longest, current = 0, 0
+    for r in returns:
+        current = current + 1 if r < 0 else 0
+        longest = max(longest, current)
+    return longest
+
+
+def effective_bets_per_day(trades: pd.DataFrame, column: str = "net_return") -> tuple[float, float, float]:
+    """Positions per day, their intraclass correlation within a day, and the effective number of independent bets per day.
+
+    Positions opened on the same day share the market they live in; if they
+    move together they count as fewer bets. With ICC the intraclass
+    correlation of returns grouped by entry day and m the mean positions per
+    day, the effective number is m / (1 + (m - 1) ICC). ICC is the one-way
+    ANOVA estimate, floored at 0.
+    """
+    entered = trades[trades["reason"] != "not entered"].copy()
+    entered["day"] = pd.to_datetime(entered["entry_time"]).dt.floor("D")
+    groups = [g[column].to_numpy() for _, g in entered.groupby("day") if len(g) >= 2]
+    if len(groups) < 2:
+        return float("nan"), float("nan"), float("nan")
+    sizes = np.array([len(g) for g in groups])
+    grand = np.concatenate(groups).mean()
+    between = sum(len(g) * (g.mean() - grand) ** 2 for g in groups) / (len(groups) - 1)
+    within = sum(((g - g.mean()) ** 2).sum() for g in groups) / (sizes.sum() - len(groups))
+    m0 = (sizes.sum() - (sizes**2).sum() / sizes.sum()) / (len(groups) - 1)
+    icc = max(0.0, (between - within) / (between + (m0 - 1) * within)) if between + (m0 - 1) * within > 0 else 0.0
+    m = sizes.mean()
+    return float(m), float(icc), float(m / (1 + (m - 1) * icc))
+
+
+def fat_tail_report(trades: pd.DataFrame, holding_hours: float, interval_hours: float = 1, column: str = "net_return") -> dict:
+    """The indicators of implementation plan 12.8, as one row."""
+    entered = trades[trades["reason"] != "not entered"].sort_values("entry_time")
+    returns = entered[column]
+    daily = daily_returns_from_equity(equity_curve(trades, holding_hours, interval_hours, column))
+    growth, growth_low, growth_high = log_growth(daily)
+    per_day, icc, effective = effective_bets_per_day(trades, column)
+    return {
+        "log_growth": growth,
+        "log_growth_low": growth_low,
+        "log_growth_high": growth_high,
+        "probability_of_loss": probability_of_loss(daily),
+        "mean_position": float(returns.mean()),
+        "median_position": float(returns.median()),
+        "skewness": float(sps.skew(returns)) if len(returns) > 2 else float("nan"),
+        "top_1pct_share": top_share(returns, 0.01),
+        "top_5pct_share": top_share(returns, 0.05),
+        "longest_losing_run": longest_losing_run(returns),
+        "positions_per_day": per_day,
+        "same_day_correlation": icc,
+        "effective_bets_per_day": effective,
+    }

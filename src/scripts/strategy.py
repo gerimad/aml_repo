@@ -151,6 +151,7 @@ def select(signal: pd.DataFrame, version: str, k: int, weighting: str = "account
     Versions:
       surprise          predicted / (1 + visible), visible in the same unit (accounts or ETH)
       filtered_visible  of the 3k tokens with the most visible demand, the k with the highest predicted demand
+      unexplained_flow  visible / (1 + predicted): demand the recommender did not expect (a catalyst, or a push)
       predicted         predicted demand alone (reported, not a candidate for the strategy)
       tail_popularity   the k tokens with the most buyers in the last 24 hours (the primary benchmark)
       tail_flow         the k tokens with the largest buy volume in ETH in the last 24 hours
@@ -166,6 +167,8 @@ def select(signal: pd.DataFrame, version: str, k: int, weighting: str = "account
     elif version == "filtered_visible":
         shortlist = visible.nlargest(3 * k).index
         score = demand.where(demand.index.isin(shortlist), -np.inf)
+    elif version == "unexplained_flow":
+        score = visible / (1 + demand)
     elif version == "predicted":
         score = demand
     elif version == "tail_popularity":
@@ -183,3 +186,58 @@ def select(signal: pd.DataFrame, version: str, k: int, weighting: str = "account
     )
     chosen = order[np.isfinite(order["score"])].head(k).index
     return pool.loc[chosen]
+
+
+# --------------------------------------------------------------------------
+# Launch momentum (implementation plan 12.8): order flow of new tokens, no recommender
+# --------------------------------------------------------------------------
+
+
+def launch_table(prices: pd.DataFrame, s: pd.Timestamp, min_age_hours: float = 0.25, max_age_hours: float = 6) -> pd.DataFrame:
+    """Tokens between min_age_hours and max_age_hours old at s, with their order flow, from priced swaps before s.
+
+    A token's launch is its first priced swap (against a base currency).
+    Columns: decision, token (address), pool (its most active base pool since
+    launch, by ETH volume), age_hours, buyers_since_launch, buyers_1h,
+    buy_share_1h (share of the last hour's swaps that are buys), buy_eth_since_launch.
+    """
+    since = prices[(prices["timestamp"] >= s - pd.Timedelta(hours=max_age_hours + 1)) & (prices["timestamp"] < s)]
+    launch = prices[prices["timestamp"] < s].groupby("token")["timestamp"].min()
+    age = (s - launch).dt.total_seconds() / 3600
+    young = age[(age >= min_age_hours) & (age <= max_age_hours)].index
+    flow = since[since["token"].isin(young)]
+    flow = flow[flow["timestamp"] >= flow["token"].map(launch)]
+    last_hour = flow[flow["timestamp"] >= s - pd.Timedelta(hours=1)]
+    by_pool = flow.groupby(["token", "pool"])["volume_eth"].sum().reset_index()
+    table = pd.DataFrame({
+        "buyers_since_launch": flow[flow["side"] == "buy"].groupby("token")["tx_from"].nunique(),
+        "buyers_1h": last_hour[last_hour["side"] == "buy"].groupby("token")["tx_from"].nunique(),
+        "buy_share_1h": (last_hour["side"] == "buy").groupby(last_hour["token"]).mean(),
+        "buy_eth_since_launch": flow[flow["side"] == "buy"].groupby("token")["volume_eth"].sum(),
+        "pool": by_pool.sort_values("volume_eth").drop_duplicates("token", keep="last").set_index("token")["pool"],
+    }).fillna({"buyers_since_launch": 0, "buyers_1h": 0, "buy_share_1h": 0.0, "buy_eth_since_launch": 0.0})  # fmt: skip
+    table["age_hours"] = age.reindex(table.index)
+    table.index.name = "token"
+    table = table.reset_index()
+    table.insert(0, "decision", s)
+    return table
+
+
+def select_launch(table: pd.DataFrame, version: str, k: int, min_buyers: int, min_buy_share: float, already: set) -> pd.DataFrame:
+    """The k tokens a launch rule picks at one decision; tokens in `already` (bought before) are skipped.
+
+    launch_momentum   the most buyers in the last hour, among tokens with at least min_buyers since launch
+                      and a buy share of at least min_buy_share in the last hour
+    launch_random     k tokens at random from the same universe (the benchmark), seeded by the decision time
+    """
+    pool = table[(table["buyers_since_launch"] >= min_buyers) & table["pool"].notna() & ~table["token"].isin(already)]
+    if pool.empty:
+        return pool
+    if version == "launch_momentum":
+        eligible = pool[pool["buy_share_1h"] >= min_buy_share]
+        return eligible.sort_values(["buyers_1h", "token"], ascending=[False, True]).head(k)
+    if version == "launch_random":
+        seed = int(pd.Timestamp(pool["decision"].iloc[0]).timestamp())
+        chosen = np.random.default_rng(seed).choice(len(pool), size=min(k, len(pool)), replace=False)
+        return pool.iloc[np.sort(chosen)]
+    raise ValueError(f"unknown launch version {version!r}")

@@ -62,3 +62,32 @@ def test_deflated_sharpe_falls_as_more_settings_are_tried():
     one = pf.deflated_sharpe(daily, trials=1, trial_sharpes_sd=0.0)
     many = pf.deflated_sharpe(daily, trials=100, trial_sharpes_sd=0.05)
     assert 0 <= many < one <= 1
+
+
+def test_log_growth_and_probability_of_loss():
+    daily = pd.Series([0.1, -0.05, 0.1, -0.05])
+    growth, low, high = pf.log_growth(daily)
+    assert growth == pytest.approx(np.log1p(daily).mean()) and low <= growth <= high
+    assert pf.probability_of_loss(pd.Series([0.01] * 10)) == 0.0
+    assert pf.probability_of_loss(pd.Series([-0.01] * 10)) == 1.0
+
+
+def test_top_share_and_losing_run():
+    returns = pd.Series([-1.0] * 49 + [99.0])
+    assert pf.top_share(returns, 0.01) == pytest.approx(99.0 / 50.0)
+    assert pf.longest_losing_run(returns) == 49
+
+
+def test_effective_bets_fall_when_positions_of_a_day_move_together():
+    rng = np.random.default_rng(0)
+    rows_independent, rows_together = [], []
+    for day in range(30):
+        common = rng.normal(0, 1)
+        for _ in range(10):
+            entry = T0 + pd.Timedelta(days=day)
+            rows_independent.append({"entry_time": entry, "reason": "time", "net_return": rng.normal(0, 1)})
+            rows_together.append({"entry_time": entry, "reason": "time", "net_return": common + rng.normal(0, 0.1)})
+    _, icc_a, eff_a = pf.effective_bets_per_day(pd.DataFrame(rows_independent))
+    _, icc_b, eff_b = pf.effective_bets_per_day(pd.DataFrame(rows_together))
+    assert icc_a < 0.1 and eff_a > 8
+    assert icc_b > 0.9 and eff_b < 1.2
