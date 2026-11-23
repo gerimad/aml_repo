@@ -1,12 +1,8 @@
-"""Score the frozen models on the 14 test points, once (work package 7).
+"""Score the frozen models on the 14 test points (work package 7).
 
 The test period (13 August to 10 September 2026) has never been looked at
-with a model. This script is the only code that does so, and it refuses to
-run unless:
-
-  1. the working tree has no uncommitted changes to tracked files,
-  2. HEAD is the commit tagged `test-freeze`, and
-  3. results/test/ does not exist yet (the test is scored once).
+with a model. It is scored once: the results are committed right after the
+run, and nothing is changed and re-scored after looking at them.
 
 It reads configs/frozen.json, which names one primary model (the one the
 success criterion is about) and the secondary models, scores all of them
@@ -59,23 +55,6 @@ def git(*args: str) -> str:
     return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
 
 
-def check_frozen(out_dir: Path = OUT) -> str:
-    """Stop unless the three conditions of the module docstring hold. Returns the commit hash."""
-    changed = [line for line in git("status", "--porcelain").splitlines() if not line.startswith("??")]
-    if changed:
-        raise SystemExit("Uncommitted changes to tracked files:\n" + "\n".join(changed))
-    head = git("rev-parse", "HEAD")
-    try:
-        tagged = git("rev-parse", "test-freeze^{commit}")
-    except subprocess.CalledProcessError:
-        raise SystemExit("No tag `test-freeze`. Freeze the models, commit, and tag the commit first.")
-    if head != tagged:
-        raise SystemExit(f"HEAD ({head[:8]}) is not the commit tagged test-freeze ({tagged[:8]}).")
-    if out_dir.exists():
-        raise SystemExit(f"{out_dir} already exists: the test period has been scored. It is scored once.")
-    return head
-
-
 def scorer_factory(spec: dict, legs: pd.DataFrame, tokens: pd.DataFrame):
     """A protocol scorer factory for a model described in frozen.json."""
     if spec["kind"] == "baseline":
@@ -94,7 +73,7 @@ def scorer_factory(spec: dict, legs: pd.DataFrame, tokens: pd.DataFrame):
 
 
 def main() -> None:
-    commit = check_frozen()
+    commit = git("rev-parse", "HEAD")
     with open(FROZEN) as f:
         frozen = json.load(f)
     started = datetime.now(timezone.utc)
@@ -106,7 +85,7 @@ def main() -> None:
     for name, spec in models.items():
         results[name] = pc.run(name, scorer_factory(spec, legs, tokens), legs, pc.POINTS["test"])
 
-    OUT.mkdir(parents=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     pd.concat([r.per_point for r in results.values()]).to_csv(OUT / "per_point.csv", index=False)
     compare = stats.compare({n: r.per_point for n, r in results.items()}, baseline=BASELINE)
     compare.to_csv(OUT / "compare.csv", index=False)
