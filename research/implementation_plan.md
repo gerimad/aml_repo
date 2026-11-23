@@ -551,6 +551,7 @@ an exact impact is optional (12.7).
 | --- | --- | --- |
 | `prices.py` | `token_decimals`, `pool_fees`, `eth_price_per_block`, `swap_prices`, `impact_estimate` | 12.2 |
 | `strategy.py` | `tail_tokens(task)`, `predicted_inflow(task, lists, hit_rates, activity)`, `surprise(inflow, recent_volume)`, `universe(...)`, `select(scores, k)` | the signal and the rules of `trading_strategy_backtest.md` |
+| `performance.py` | `equity_curve`, `report` and the indicators of 12.6 | the portfolio built from sleeves; Sharpe, deflated Sharpe, Sortino, drawdown, Calmar, Kelly, trade statistics |
 | `backtest.py` | `run(decisions, prices, costs, settings) -> trades, periods` | opens positions at the first swap at least one block after $s$; exits at the first swap after $s + H$ or after the stop is crossed; a position that cannot be exited is worth zero; returns one row per trade and one row per 6-hour period with all open positions marked to the last swap price |
 
 **Tests** (toy pools and swaps written by hand):
@@ -595,9 +596,26 @@ trades in. All others are secondary.
 
 ### 12.6 Success criterion (stated before the held-out period is touched)
 
-On the 42 held-out days: the mean net return per 6-hour period of the tail
-strategy minus that of tail popularity is positive, and its 95% bootstrap
-interval over days (10,000 resamples, seed 0) excludes zero. Reported
+On the 42 held-out days: the mean daily net return of the tail strategy's
+portfolio minus that of tail popularity's portfolio is positive, and its 95%
+bootstrap interval over days (10,000 resamples, seed 0) excludes zero. Both
+portfolios are built the same way (`performance.equity_curve`: one sleeve per
+decision slot plus one, each decision investing its sleeve equally in its
+positions, values updated at exit).
+
+**Performance indicators reported for every strategy and benchmark**
+(`performance.report`), on the development periods and on the held-out days:
+total and annual return; mean and volatility of daily returns; Sharpe ratio
+(annualized over 365 days, the risk-free rate in ETH taken as 0) with a 95%
+bootstrap interval over days; the **deflated Sharpe ratio** (Bailey and
+López de Prado, 2014), with the number of settings tried on development data
+as the number of trials, so that the search itself is accounted for; Sortino
+ratio; maximum drawdown and its length; Calmar ratio; hit rate, average win
+and loss, profit factor; Kelly fraction in its continuous form (mean /
+variance of daily returns) and its discrete form (from the hit rate and the
+win/loss ratio), with half-Kelly reported as the practical size; the share of
+positions that could not be exited; capacity; and the number of decisions
+skipped because their sleeve was still invested. Reported
 alongside, never instead: the same before costs, the capacity (capital usable
 under the position cap), the return with and without tokens whose buyers are
 mostly in coordinated groups, and every benchmark.
