@@ -1,0 +1,128 @@
+{
+  "primary": "ranker: lambdamart",
+  "models": {
+    "ranker: lambdamart": {
+      "kind": "ranker",
+      "model": "lambdamart",
+      "file": "models/lambdamart.model",
+      "features": [
+        "pop_14d",
+        "pop_1d",
+        "pop_half_life_1d",
+        "pop_half_life_7d",
+        "pop_rank",
+        "knn_score",
+        "knn_score_time",
+        "max_similarity",
+        "n_pointing",
+        "user_window_tokens",
+        "user_past_tokens",
+        "user_days_since_last_trade",
+        "user_share_buys",
+        "token_age_days",
+        "token_censored",
+        "token_users_first_hour",
+        "token_users_first_day",
+        "launch_weth",
+        "launch_usdc",
+        "launch_usdt"
+      ],
+      "settings": {
+        "k": 400,
+        "shrink": 200.0,
+        "weight": 0.2,
+        "half_life": 7.0,
+        "history_days": null,
+        "candidates": 500
+      }
+    },
+    "ranker: gbdt": {
+      "kind": "ranker",
+      "model": "gbdt",
+      "file": "models/gbdt.model",
+      "features": [
+        "pop_14d",
+        "pop_1d",
+        "pop_half_life_1d",
+        "pop_half_life_7d",
+        "pop_rank",
+        "knn_score",
+        "knn_score_time",
+        "max_similarity",
+        "n_pointing",
+        "user_window_tokens",
+        "user_past_tokens",
+        "user_days_since_last_trade",
+        "user_share_buys",
+        "token_age_days",
+        "token_censored",
+        "token_users_first_hour",
+        "token_users_first_day",
+        "launch_weth",
+        "launch_usdc",
+        "launch_usdt"
+      ],
+      "settings": {
+        "k": 400,
+        "shrink": 200.0,
+        "weight": 0.2,
+        "half_life": 7.0,
+        "history_days": null,
+        "candidates": 500
+      }
+    },
+    "ranker: logistic": {
+      "kind": "ranker",
+      "model": "logistic",
+      "file": "models/logistic.model",
+      "features": [
+        "pop_14d",
+        "pop_1d",
+        "pop_half_life_1d",
+        "pop_half_life_7d",
+        "pop_rank",
+        "knn_score",
+        "knn_score_time",
+        "max_similarity",
+        "n_pointing",
+        "user_window_tokens",
+        "user_past_tokens",
+        "user_days_since_last_trade",
+        "user_share_buys",
+        "token_age_days",
+        "token_censored",
+        "token_users_first_hour",
+        "token_users_first_day",
+        "launch_weth",
+        "launch_usdc",
+        "launch_usdt"
+      ],
+      "settings": {
+        "k": 400,
+        "shrink": 200.0,
+        "weight": 0.2,
+        "half_life": 7.0,
+        "history_days": null,
+        "candidates": 500
+      }
+    },
+    "fixed blend": {
+      "kind": "fixed_blend",
+      "settings": {
+        "k": 400,
+        "shrink": 200.0,
+        "weight": 0.5
+      }
+    },
+    "time-weighted blend": {
+      "kind": "fixed_blend",
+      "settings": {
+        "k": 400,
+        "shrink": 200.0,
+        "weight": 0.2,
+        "half_life": 7.0,
+        "history_days": null
+      }
+    }
+  }
+}
