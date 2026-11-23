@@ -34,7 +34,9 @@ PERIOD_COLOURS = {"burn-in": "#efeeea", "Dev A": "#dfe9f7", "Dev B": "#dcf1e8", 
 
 
 def colour(name: str, fallback_slot: int = 0) -> str:
-    """The colour of a model by name; unknown names get a fixed series slot."""
+    """The colour of a model by name; any "ranker ..." name gets the ranker colour; unknown names get a series slot."""
+    if name.startswith("ranker"):
+        return MODEL_COLOURS["ranker"]
     return MODEL_COLOURS.get(name, SERIES[fallback_slot % len(SERIES)])
 
 

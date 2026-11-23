@@ -1,0 +1,21 @@
+kind,params,cv_recall
+logistic,"{""C"": 0.01}",0.18303567529085688
+logistic,"{""C"": 0.1}",0.18284730723530132
+logistic,"{""C"": 1}",0.18277328762745818
+logistic,"{""C"": 10}",0.18277328762745818
+gbdt,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 100}",0.1988149361609548
+gbdt,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 300}",0.20074991412680152
+gbdt,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 100}",0.19864007109424478
+gbdt,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 300}",0.20029212588432949
+gbdt,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 100}",0.20430954648404995
+gbdt,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 300}",0.20651180158511173
+gbdt,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 100}",0.20066441750920974
+gbdt,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 300}",0.2050269897386813
+lambdamart,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 100}",0.20112098176658527
+lambdamart,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 300}",0.21325788238184845
+lambdamart,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 100}",0.20170846385168276
+lambdamart,"{""num_leaves"": 15, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 300}",0.21160170329989708
+lambdamart,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 100}",0.21452716705520253
+lambdamart,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 100, ""n_trees"": 300}",0.22420332238567853
+lambdamart,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 100}",0.21539594786337563
+lambdamart,"{""num_leaves"": 31, ""learning_rate"": 0.05, ""min_data_in_leaf"": 1000, ""n_trees"": 300}",0.22421729646756416
