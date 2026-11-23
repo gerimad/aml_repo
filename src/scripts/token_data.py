@@ -151,6 +151,15 @@ class IdMap:
         """The mapping as a frame with columns id_name and address."""
         return pd.DataFrame({id_name: np.arange(len(self.ids), dtype=np.int32), "address": list(self.ids)})
 
+    @classmethod
+    def from_table(cls, table: pd.DataFrame, id_name: str) -> IdMap:
+        """An IdMap that continues an existing table: known addresses keep their ids, new ones get the next."""
+        ordered = table.sort_values(id_name)
+        assert (ordered[id_name].to_numpy() == np.arange(len(ordered))).all(), "ids must be 0, 1, 2, ... without gaps"
+        id_map = cls()
+        id_map.ids = dict(zip(ordered["address"], ordered[id_name].astype(int)))
+        return id_map
+
 
 def token_table(legs: pd.DataFrame, pools: pd.DataFrame, data_start=DATA_START) -> pd.DataFrame:
     """One row per token: when it was first traded and in which pool.
@@ -325,6 +334,96 @@ def merge_week_rows(validation: pd.DataFrame) -> pd.DataFrame:
             "passed": part["passed"].all(),
         })  # fmt: skip
     return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------
+# The extension: weeks after the project (work package 8)
+# --------------------------------------------------------------------------
+
+EXTENSION_DIR = PROJECT_DIR / "extension"
+
+
+def build_extension(
+    first_block: int, last_block: int, start, end, out_dir: Path = EXTENSION_DIR, chunks_per_batch: int = 50
+) -> None:
+    """Trade legs for weeks after the project, with the project's ids and base currencies.
+
+    The same steps as build_project_data, except that:
+      - the id maps continue the project's tables, so an account or token
+        known in the project keeps its id and new ones get the next ids;
+      - the base currencies are the project's (decided on the burn-in), not
+        decided again;
+      - only legs with start <= timestamp < end are kept, so the extension
+        joins the project's legs (which end at 10 September 00:00) without
+        overlap. first_block may lie before `start` to cover it.
+    Writes legs.parquet (the extension's legs only), users, tokens and pools
+    (the full, extended tables) and validation.csv to out_dir.
+    """
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    users = IdMap.from_table(pd.read_parquet(PROJECT_DIR / "users.parquet"), "user_id")
+    project_tokens = load_tokens()
+    tokens = IdMap.from_table(project_tokens[["token_id", "address"]], "token_id")
+    pools = IdMap.from_table(pd.read_parquet(PROJECT_DIR / "pools.parquet")[["pool_id", "address"]], "pool_id")
+    removed = set(project_tokens.loc[project_tokens["is_base"], "token_id"])
+
+    files = ds.chunk_files(ds.DATA_DIR, first_block, last_block)
+    print(f"Extension blocks {first_block:,} to {last_block:,}: {len(files):,} chunk files, no gaps.")
+    leg_batches, validations = [], []
+    for i in range(0, len(files), chunks_per_batch):
+        swaps = pd.concat([pd.read_parquet(f) for f in files[i : i + chunks_per_batch]], ignore_index=True)
+        swaps = swaps.sort_values(["block", "tx_index", "log_index"], ignore_index=True)
+        pool_tokens = ds.load_pool_tokens(swaps["pool"].unique())
+        validations.append(ds.validate_swaps(swaps, pool_tokens))
+        legs = legs_with_time_and_pool(swaps, pool_tokens)
+        legs = legs[(legs["timestamp"] >= start) & (legs["timestamp"] < end)]
+        leg_batches.append(pd.DataFrame({
+            "block": legs["block"].to_numpy(np.int64),
+            "timestamp": legs["timestamp"].to_numpy(),
+            "user": users.encode(legs["user"]),
+            "token": tokens.encode(legs["token"]),
+            "side": pd.Categorical(legs["side"], categories=["buy", "sell"]),
+            "pool": pools.encode(legs["pool"]),
+        }))  # fmt: skip
+        print(f"  batch {i // chunks_per_batch + 1}: {len(swaps):,} swaps -> {len(legs):,} legs", flush=True)
+
+    merge_week_rows(pd.concat(validations, ignore_index=True)).to_csv(out_dir / "validation.csv", index=False)
+    legs = pd.concat(leg_batches, ignore_index=True).sort_values(["block", "user", "token"], kind="stable", ignore_index=True)
+    first_time, last_time = legs["timestamp"].min(), legs["timestamp"].max()
+    assert first_time <= start + pd.Timedelta(minutes=5) and last_time >= end - pd.Timedelta(minutes=5), (
+        f"the blocks cover {first_time} to {last_time}, not {start} to {end}"
+    )
+    legs = legs[~legs["token"].isin(removed)].reset_index(drop=True)
+
+    pool_table = pools.table("pool_id")
+    pool_tokens = ds.load_pool_tokens(pool_table["address"].tolist()).set_index("pool")
+    pool_table["token0_id"] = tokens.encode(pool_table["address"].map(pool_tokens["token0"]))
+    pool_table["token1_id"] = tokens.encode(pool_table["address"].map(pool_tokens["token1"]))
+
+    # Tokens first traded in the extension get their first trade from it; project tokens keep theirs.
+    token_ids = tokens.table("token_id")
+    token_ids["symbol"] = token_ids["address"].map(symbol)
+    token_ids["is_base"] = token_ids["token_id"].isin(removed)
+    new_legs = legs[~legs["token"].isin(set(project_tokens["token_id"]))].sort_values("timestamp", kind="stable")
+    new_traded = token_table(new_legs, pool_table, data_start=DATA_START) if len(new_legs) else pd.DataFrame()
+    old_traded = project_tokens.drop(columns=["address", "symbol", "is_base"])
+    token_ids = token_ids.merge(pd.concat([old_traded, new_traded], ignore_index=True), on="token_id", how="left")
+
+    legs.to_parquet(out_dir / "legs.parquet")
+    users.table("user_id").to_parquet(out_dir / "users.parquet")
+    token_ids.to_parquet(out_dir / "tokens.parquet")
+    pool_table.to_parquet(out_dir / "pools.parquet")
+    print(f"Written to {out_dir}: {len(legs):,} legs, {legs['user'].nunique():,} users, {len(new_traded):,} new tokens.")
+
+
+def load_all_legs() -> pd.DataFrame:
+    """The project's legs followed by the extension's, one timeline with one set of ids."""
+    return pd.concat([load_legs(), load_legs(EXTENSION_DIR)], ignore_index=True)
+
+
+def load_all_tokens() -> pd.DataFrame:
+    """The extended token table (a superset of the project's, with the same ids)."""
+    return load_tokens(EXTENSION_DIR)
 
 
 def load_legs(data_dir: Path = PROJECT_DIR) -> pd.DataFrame:

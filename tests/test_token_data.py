@@ -97,3 +97,10 @@ def test_merge_week_rows_combines_two_halves_of_a_week():
     assert np.isclose(week["blocks_with_swap"], 0.25 * 1.0 + 0.75 * 0.98)
     assert week["longest_gap_blocks"] == 3
     assert week["swaps_per_day_min"] == 20 and week["swaps_per_day_max"] == 80 and week["low_days"] == 1
+
+
+def test_an_id_map_from_a_table_keeps_old_ids_and_continues_the_numbering():
+    table = pd.DataFrame({"user_id": [1, 0], "address": ["0xb", "0xa"]})
+    id_map = td.IdMap.from_table(table, "user_id")
+    ids = id_map.encode(pd.Series(["0xa", "0xc", "0xb", "0xc"]))
+    assert ids.tolist() == [0, 2, 1, 2]
