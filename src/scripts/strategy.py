@@ -49,9 +49,9 @@ def active_rows(task: pc.Task) -> np.ndarray:
 def account_buy_volume(prices: pd.DataFrame, users: pd.DataFrame, s: pd.Timestamp, days: int = 14) -> pd.Series:
     """Buy volume in ETH per account id over the `days` before s, from the priced swaps (signing account = tx_from)."""
     window = prices[(prices["timestamp"] >= s - pd.Timedelta(days=days)) & (prices["timestamp"] < s) & (prices["side"] == "buy")]
-    by_address = window.groupby("tx_from")["volume_eth"].sum()
+    by_address = window.groupby("tx_from", observed=True)["volume_eth"].sum()
     user_id = users.set_index("address")["user_id"]
-    by_user = by_address.groupby(by_address.index.map(user_id)).sum()
+    by_user = by_address.groupby(by_address.index.astype(str).map(user_id)).sum()
     return by_user[by_user.index.notna()]
 
 
@@ -59,14 +59,14 @@ def recent_activity(legs: pd.DataFrame, prices: pd.DataFrame, token_address: pd.
     """Per token id, over the 24 hours before s: buyers, sellers, buy volume in ETH and the most active base pool."""
     day = legs[(legs["timestamp"] >= s - pd.Timedelta(hours=24)) & (legs["timestamp"] < s)]
     table = pd.DataFrame({
-        "buyers_24h": day[day["side"] == "buy"].groupby("token")["user"].nunique(),
-        "sellers_24h": day[day["side"] == "sell"].groupby("token")["user"].nunique(),
+        "buyers_24h": day[day["side"] == "buy"].groupby("token", observed=True)["user"].nunique(),
+        "sellers_24h": day[day["side"] == "sell"].groupby("token", observed=True)["user"].nunique(),
     }).fillna(0)  # fmt: skip
     priced = prices[(prices["timestamp"] >= s - pd.Timedelta(hours=24)) & (prices["timestamp"] < s)]
     token_id = pd.Series(token_address.index, index=token_address.to_numpy())
-    priced = priced.assign(token_id=priced["token"].map(token_id))
-    volume = priced[priced["side"] == "buy"].groupby("token_id")["volume_eth"].sum().rename("buy_eth_24h")
-    by_pool = priced.groupby(["token_id", "pool"])["volume_eth"].sum().reset_index()
+    priced = priced.assign(token_id=priced["token"].astype(str).map(token_id).astype(float))
+    volume = priced[priced["side"] == "buy"].groupby("token_id", observed=True)["volume_eth"].sum().rename("buy_eth_24h")
+    by_pool = priced.groupby(["token_id", "pool"], observed=True)["volume_eth"].sum().reset_index()
     best_pool = by_pool.sort_values("volume_eth").drop_duplicates("token_id", keep="last").set_index("token_id")["pool"]
     return table.join(volume, how="outer").join(best_pool.rename("pool"), how="outer").fillna({"buyers_24h": 0, "sellers_24h": 0, "buy_eth_24h": 0.0})
 
@@ -223,12 +223,12 @@ def launch_table(
     flow = since[since["token"].isin(young)]
     flow = flow[flow["timestamp"] >= flow["token"].map(launch)]
     last_hour = flow[flow["timestamp"] >= s - pd.Timedelta(hours=1)]
-    by_pool = flow.groupby(["token", "pool"])["volume_eth"].sum().reset_index()
+    by_pool = flow.groupby(["token", "pool"], observed=True)["volume_eth"].sum().reset_index()
     table = pd.DataFrame({
-        "buyers_since_launch": flow[flow["side"] == "buy"].groupby("token")["tx_from"].nunique(),
-        "buyers_1h": last_hour[last_hour["side"] == "buy"].groupby("token")["tx_from"].nunique(),
-        "buy_share_1h": (last_hour["side"] == "buy").groupby(last_hour["token"]).mean(),
-        "buy_eth_since_launch": flow[flow["side"] == "buy"].groupby("token")["volume_eth"].sum(),
+        "buyers_since_launch": flow[flow["side"] == "buy"].groupby("token", observed=True)["tx_from"].nunique(),
+        "buyers_1h": last_hour[last_hour["side"] == "buy"].groupby("token", observed=True)["tx_from"].nunique(),
+        "buy_share_1h": (last_hour["side"] == "buy").groupby(last_hour["token"], observed=True).mean(),
+        "buy_eth_since_launch": flow[flow["side"] == "buy"].groupby("token", observed=True)["volume_eth"].sum(),
         "pool": by_pool.sort_values("volume_eth").drop_duplicates("token", keep="last").set_index("token")["pool"],
     }).fillna({"buyers_since_launch": 0, "buyers_1h": 0, "buy_share_1h": 0.0, "buy_eth_since_launch": 0.0})  # fmt: skip
     table["age_hours"] = age.reindex(table.index)

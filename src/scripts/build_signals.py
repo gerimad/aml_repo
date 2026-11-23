@@ -35,8 +35,11 @@ def main(start: str, end: str, use_extension: bool) -> None:
     times = st.decision_times(pd.Timestamp(start, tz="UTC"), pd.Timestamp(end, tz="UTC"))
     # Prices from 14 days before the first decision (account volumes) to the last one.
     first_ts = times[0] - pd.Timedelta(days=15)
-    prices = px.load_prices()
-    prices = prices[(prices["timestamp"] >= first_ts) & (prices["timestamp"] < times[-1])]
+    # Only the columns the signal uses, with repeated text as categories: the machine has 8 GB.
+    prices = px.load_prices()[["timestamp", "tx_from", "side", "volume_eth", "token", "pool"]]
+    prices = prices[(prices["timestamp"] >= first_ts) & (prices["timestamp"] < times[-1])].reset_index(drop=True)
+    for column in ("tx_from", "side", "token", "pool"):
+        prices[column] = prices[column].astype("category")
     print(f"{len(times)} decision times from {times[0]} to {times[-1]}; {len(prices):,} priced swaps loaded.", flush=True)
     for s in times:
         started = time.time()
