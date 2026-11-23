@@ -571,6 +571,15 @@ an exact impact is optional (12.7).
 | Stop | none, −50% |
 | Activity weight $a_u$ | 1 (count accounts), buy volume |
 | Position cap | 1% of the pool's 24-hour buy volume (fixed, not tuned) |
+| Signal version | surprise (predicted ÷ visible, as planned); **filtered visible demand**: the $3K$ tail tokens with the most buyers in the last 24 hours, of which the $K$ with the highest predicted demand (added 23 November 2026, before any tuning; see below) |
+
+The second version was added after the explorer page showed, on six test
+decision times and without prices, that tail tokens picked by visible demand
+get more new buyers than tokens picked by predicted demand or surprise
+(29.3 against 19.9 and 12.7 new buyers per token at $K = 5$). Using the
+recommender as a filter on visible demand is the version that this evidence
+leaves open. The choice between the versions is made on development data like
+every other setting; the held-out criterion of 12.6 does not change.
 
 Choice rule on development data: the highest mean net return per period minus
 that of tail popularity (12.5); ties within one standard error go to the
