@@ -374,3 +374,13 @@ def test_fetch_transactions_gives_up_if_a_transaction_stays_missing(monkeypatch)
     monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
     with pytest.raises(RuntimeError, match="still not found after 8 rounds"):
         ds.fetch_transactions(["0xlate"], session=LaggingNode(misses=100))
+
+
+def test_decode_symbol_reads_strings_and_fixed_bytes_and_rejects_junk():
+    from eth_abi import encode
+
+    assert ds.decode_symbol(encode(["string"], ["PEPE"])) == "PEPE"
+    assert ds.decode_symbol(b"MKR" + b"\x00" * 29) == "MKR"
+    assert ds.decode_symbol(encode(["string"], ["x" * 40])) is None, "too long for a symbol"
+    assert ds.decode_symbol(encode(["string"], ["bad\nname"])) is None, "not printable"
+    assert ds.decode_symbol(b"") is None

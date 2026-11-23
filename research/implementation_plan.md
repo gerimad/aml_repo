@@ -27,6 +27,7 @@ formats, settings, checks and the order of work.
 9. [WP7 Test and write-up](#9-wp7-test-and-write-up)
 10. [Order of work, effort and checkpoints](#10-order-of-work-effort-and-checkpoints)
 11. [Open points found while writing this plan](#11-open-points-found-while-writing-this-plan)
+12. [WP8 Trading strategy backtest (extension)](#12-wp8-trading-strategy-backtest-extension)
 
 ## 0. Starting point
 
@@ -453,6 +454,7 @@ many tokens). Then the final report.
 | WP4 time weighting | WP3 | 1–2 days | `configs/wp4_time.json` |
 | WP6 ranker | WP3, WP4, WP5 | 4 days | Dev B comparison and ablation |
 | WP7 freeze, test, write-up | WP3–WP6 | 3 days | tag `test-freeze`, `results/test/` |
+| WP8 strategy backtest (extension, section 12) | WP7 (frozen recommender) | 1.5 weeks + 1–2 days of download | tag `strategy-freeze`, `results/wp8/heldout/` |
 
 - **Minimum complete result:** WP1 to WP3 and WP7. That is a tuned neighbour
   model compared with the baseline on 14 clean test points. WP4 to WP6 add to
@@ -497,3 +499,108 @@ written. Each needs a decision before the package that uses it, recorded in
 6. **`load_swaps()` with no arguments loads the exploration chunks.** Every
    project notebook must call it with the project block range (3.2), or read
    `data/project/legs.parquet`, which is the recommended path.
+
+## 12. WP8 Trading strategy backtest (extension)
+
+**Goal:** test whether the recommender's gain over the popularity baseline is
+worth money: a strategy that buys tail tokens with high predicted new demand,
+backtested after costs against strategies that use only visible demand. The
+strategy, its rationale and its traps are described in
+[`trading_strategy_backtest.md`](trading_strategy_backtest.md); this section
+fixes how it is built and judged. Added on 23 November 2026, after the
+project's test was scored (see `project_direction.md`, "Changes to the plan").
+
+**What does not change.** The recommender is the one frozen in WP7
+(`configs/frozen.json`): the untimed fixed blend for the tail strategy, the
+LambdaMART ranker for the whole-market variant. WP8 tunes only the strategy's
+own settings.
+
+### 12.1 Periods
+
+| Part | Period (2026) | Use |
+| --- | --- | --- |
+| Strategy development | Dev A and Dev B (2 July – 13 August) | Tune the settings of 12.4 |
+| Strategy choice | the project's test period (13 August – 10 September) | Choose between the tail strategy, the whole-market variant and their settings. This period was scored for recall in WP7 but never for returns. |
+| History only | 24 September – 8 October (the feasibility window, downloaded earlier) | 14-day history for the second held-out part; never evaluated |
+| **Held-out** | **10 – 24 September and 8 October – 5 November** | Scored once, from a commit tagged `strategy-freeze`. Never downloaded or looked at before WP8. |
+
+Decision times are every 6 hours. The bootstrap of 12.6 resamples **days**,
+not decisions, because positions overlap and trades on one day are not
+independent. The held-out part has 42 days.
+
+### 12.2 Data
+
+| Step | Detail | Code |
+| --- | --- | --- |
+| Download | swaps for 10 Sep – 24 Sep and 8 Oct – 5 Nov with the WP1 pipeline (`dex_swaps.py`), validated per week as in WP1 | existing |
+| Token decimals | `decimals()` of every token through Multicall3, as for the pool tokens; tokens whose call fails are excluded and counted | `prices.py` |
+| V3 fee tiers | `fee()` of every V3 pool through Multicall3; V2 pools are 0.3% | `prices.py` |
+| ETH price | per block from the WETH/USDC and WETH/USDT pools: volume-weighted over the block's swaps, carried forward | `prices.py` |
+| Price per swap | for each swap with a base token: base amount / token amount, using the decimals and the sign convention of V2 and V3 events | `prices.py` |
+| Buy volume per account | each account's buys in ETH over the 14 days before $s$ | `strategy.py` |
+
+Price impact is estimated from the data, because pool reserves are not
+downloaded: for a trade of size $q$ in a pool, the median relative price move
+from the swap before to the swap after, over observed swaps of size near $q$ in
+that pool in the 7 days before. Downloading V2 `Sync` events and V3 `slot0` for
+an exact impact is optional (12.7).
+
+### 12.3 Code
+
+| Module | Functions | Spec |
+| --- | --- | --- |
+| `prices.py` | `token_decimals`, `pool_fees`, `eth_price_per_block`, `swap_prices`, `impact_estimate` | 12.2 |
+| `strategy.py` | `tail_tokens(task)`, `predicted_inflow(task, lists, hit_rates, activity)`, `surprise(inflow, recent_volume)`, `universe(...)`, `select(scores, k)` | the signal and the rules of `trading_strategy_backtest.md` |
+| `backtest.py` | `run(decisions, prices, costs, settings) -> trades, periods` | opens positions at the first swap at least one block after $s$; exits at the first swap after $s + H$ or after the stop is crossed; a position that cannot be exited is worth zero; returns one row per trade and one row per 6-hour period with all open positions marked to the last swap price |
+
+**Tests** (toy pools and swaps written by hand):
+
+- a swap's price is the same whichever token is `token0`, for V2 and V3 sign conventions;
+- entry never uses a swap in or before the decision block (the look-ahead test: deleting every swap after $s$ leaves the signal unchanged, as in the ranker's leakage test);
+- the stop exits at the first swap after the fall, not at the stop level;
+- a token with no swap after entry is valued at zero;
+- costs: a round trip in a 0.3% pool with no price change loses 0.6% plus gas;
+- the head is removed exactly as `protocol.head_tokens` defines it.
+
+### 12.4 Settings tuned on development data
+
+| Setting | Values |
+| --- | --- |
+| $K$ tokens per decision | 3, 5, 10 |
+| $H$ holding time | 6, 24, 48 hours |
+| Stop | none, −50% |
+| Activity weight $a_u$ | 1 (count accounts), buy volume |
+| Position cap | 1% of the pool's 24-hour buy volume (fixed, not tuned) |
+
+Choice rule on development data: the highest mean net return per period minus
+that of tail popularity (12.5); ties within one standard error go to the
+simpler setting (smaller $K$, then $a_u = 1$, then no stop).
+
+### 12.5 Benchmarks
+
+Hold ETH; popularity; momentum; flow; random (all over the whole market); and
+**tail popularity** and **tail flow** (the same tail universe chosen by visible
+demand). The **primary comparison** is the tail strategy against **tail
+popularity**: it isolates the recommender's information from the universe it
+trades in. All others are secondary.
+
+### 12.6 Success criterion (stated before the held-out period is touched)
+
+On the 42 held-out days: the mean net return per 6-hour period of the tail
+strategy minus that of tail popularity is positive, and its 95% bootstrap
+interval over days (10,000 resamples, seed 0) excludes zero. Reported
+alongside, never instead: the same before costs, the capacity (capital usable
+under the position cap), the return with and without tokens whose buyers are
+mostly in coordinated groups, and every benchmark.
+
+### 12.7 Notebooks, configs and order
+
+| Step | Output | Effort |
+| --- | --- | --- |
+| Download and validate the held-out weeks (start first, unattended) | `data/dex_swaps/chunks/`, validation table | 1–2 days unattended |
+| `prices.py` with tests; notebook `16_prices.ipynb` (prices, ETH price, impact estimate, checked against known pools) | price tables in `data/project/prices/` | 1 day |
+| `strategy.py` with tests; notebook `17_demand_signal.ipynb`: does predicted inflow match realized new buyers, and do realized buyers move prices? (both links of the strategy, on development data) | `results/wp8/signal_dev.csv` | 1 day |
+| `backtest.py` with tests; notebook `18_backtest_development.ipynb`: settings on Dev A/B, choice on the project's test period | `configs/wp8_strategy.json` | 2–3 days |
+| Freeze (`configs/wp8_frozen.json`, tag `strategy-freeze`), then `run_backtest.py` on the held-out days once; notebook `19_backtest_heldout.ipynb` reads `results/wp8/heldout/` only | the verdict of 12.6 | 1 day |
+| Optional: `Sync`/`slot0` download for exact price impact | re-run of 18 and 19 with exact impact, reported next to the estimate | 4–18 h unattended |
+

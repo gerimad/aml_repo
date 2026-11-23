@@ -45,6 +45,7 @@ This is a summary. Where it and the PDF differ, the PDF is right.
 | 5 | **Cold start.** Refreshed lists and token features. | Share of the cold-start part that becomes reachable | 2 |
 | 6 | **Learned ranker.** Logistic regression, then boosted trees; ablation by feature group. | Ranker compared with the best fixed blend | 3, 4, 5 |
 | 7 | **Test and write-up.** Score the frozen models once on the test points. | Final report | 3 to 6 |
+| 8 | **Strategy backtest (extension).** Trade tail tokens on the recommender's predicted demand; backtest after costs against visible-demand benchmarks on held-out weeks. | Whether the gain over the baseline is worth money | 7 |
 
 ## How we work from here
 
@@ -130,3 +131,4 @@ the command again and it continues where it stopped.
 | 23 Nov 2026 | Open points 11.2–11.5 of the implementation plan are decided as proposed there. 11.2: the label stays as in the PDF; the per-point share of positives whose token the account traded before the reference window is reported. 11.3: the deploying-account feature is dropped. 11.4: one primary model, the others secondary. 11.5: success is the 95% bootstrap interval over the 14 test points excluding zero; the sign test and all 14 differences are reported alongside. | Decided by the authors before the freeze. |
 | 23 Nov 2026 | Primary model for the test: the LambdaMART ranker, by the rule of implementation plan 9.1 (largest mean paired difference against the baseline on Dev B: +0.052). Secondary: the untimed and the time-weighted fixed blends, and the boosted-trees and logistic-regression rankers. | The rule as written. Its advantage over the fixed blends faded across Dev B (notebook 14, section 6); the secondary comparison with the blends reports how this carries over to the test. |
 | 23 Nov 2026 | The trained ranker files are kept in `models/` in the repository, not only in `data/project/models/`. | `data/` is not tracked, so without this the `test-freeze` commit would not contain the models it freezes. |
+| 23 Nov 2026 | A work package 8 is added after the test: a backtest of a trading strategy built on the frozen recommender ([`trading_strategy_backtest.md`](trading_strategy_backtest.md), implementation plan section 12). It uses new held-out weeks (10 – 24 September, 8 October – 5 November) that are downloaded for it. | Decided by the authors after the test was scored. It does not change any project result: the recommender stays frozen, and the strategy has its own periods, settings and success criterion, stated before its held-out weeks are touched. |

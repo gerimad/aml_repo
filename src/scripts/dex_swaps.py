@@ -302,6 +302,81 @@ def fetch_pool_tokens_multicall(pools, url: str = TX_RPC, session=None, per_requ
     return pd.DataFrame(rows, columns=["pool", "token0", "token1"])
 
 
+SELECTOR_SYMBOL = "0x95d89b41"  # symbol()
+SELECTOR_DECIMALS = "0x313ce567"  # decimals()
+
+
+def decode_symbol(word: bytes) -> str | None:
+    """A token's symbol() answer as text, or None if it is not readable.
+
+    Most tokens return an ABI string; some old ones (MKR, for example)
+    return a fixed 32-byte value padded with zero bytes. Anything that is
+    not short printable text gives None, so that a strange contract cannot
+    put arbitrary bytes into a table or a page.
+    """
+    text = None
+    if len(word) >= 64:
+        try:
+            text = decode(["string"], word)[0]
+        except Exception:
+            text = None
+    if text is None and len(word) == 32:
+        text = word.rstrip(b"\x00").decode("utf-8", errors="ignore")
+    if not text:
+        return None
+    text = text.strip()
+    if not text or len(text) > 16 or not text.isprintable():
+        return None
+    return text
+
+
+def fetch_token_metadata_multicall(tokens, url: str = TX_RPC, session=None, per_request: int = 200) -> pd.DataFrame:
+    """symbol() and decimals() of each token address, many per request: columns address, symbol, decimals.
+
+    Uses Multicall3 as fetch_pool_tokens_multicall does; both calls may
+    fail. A failed or unreadable symbol gives None; a failed decimals()
+    gives None (a token without decimals cannot be priced). Neither value
+    changes after a token is created, so the current state is enough.
+    """
+    tokens = list(dict.fromkeys(tokens))
+    rows = []
+    for i in range(0, len(tokens), per_request):
+        part = tokens[i : i + per_request]
+        calls = [
+            (token, True, bytes.fromhex(selector[2:]))
+            for token in part
+            for selector in (SELECTOR_SYMBOL, SELECTOR_DECIMALS)
+        ]
+        data = SELECTOR_AGGREGATE3 + encode(["(address,bool,bytes)[]"], [calls]).hex()
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [{"to": MULTICALL3, "data": data}, "latest"]}
+        answers = decode(["(bool,bytes)[]"], bytes.fromhex(rpc(url, payload, session)[2:]))[0]
+        assert len(answers) == 2 * len(part), "Multicall3 answers every call"
+        for j, token in enumerate(part):
+            (ok_symbol, symbol_word), (ok_decimals, decimals_word) = answers[2 * j], answers[2 * j + 1]
+            decimals = int.from_bytes(decimals_word, "big") if ok_decimals and len(decimals_word) == 32 else None
+            rows.append({
+                "address": token,
+                "symbol": decode_symbol(symbol_word) if ok_symbol else None,
+                "decimals": decimals if decimals is not None and decimals <= 36 else None,
+            })  # fmt: skip
+    return pd.DataFrame(rows, columns=["address", "symbol", "decimals"])
+
+
+def load_token_metadata(tokens, data_dir: Path = DATA_DIR, block_size: int = 2000) -> pd.DataFrame:
+    """Symbol and decimals of the given token addresses, from a local cache that is extended as needed."""
+    path = data_dir / "token_metadata.parquet"
+    columns = ["address", "symbol", "decimals"]
+    known = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
+    missing = [token for token in dict.fromkeys(tokens) if token not in set(known["address"])]
+    session = requests.Session()
+    for i in range(0, len(missing), block_size):
+        fetched = fetch_token_metadata_multicall(missing[i : i + block_size], session=session)
+        known = pd.concat([known, fetched], ignore_index=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        known.to_parquet(path)
+    return known[known["address"].isin(set(tokens))].reset_index(drop=True)
+
+
 def load_pool_tokens(pools, data_dir: Path = DATA_DIR, block_size: int = 2000, verbose: bool = False) -> pd.DataFrame:
     """Tokens of the given pools, from a local cache that is extended as needed.
 
