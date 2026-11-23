@@ -630,15 +630,28 @@ mostly in coordinated groups, and every benchmark.
 
 ### 12.7 Notebooks, configs and order
 
-| Step | Output | Effort |
-| --- | --- | --- |
-| Download and validate the held-out weeks (start first, unattended) | `data/dex_swaps/chunks/`, validation table | 1–2 days unattended |
-| `prices.py` with tests; notebook `16_prices.ipynb` (prices, ETH price, impact estimate, checked against known pools) | price tables in `data/project/prices/` | 1 day |
-| `strategy.py` with tests; notebook `17_demand_signal.ipynb`: does predicted inflow match realized new buyers, and do realized buyers move prices? (both links of the strategy, on development data) | `results/wp8/signal_dev.csv` | 1 day |
-| `backtest.py` with tests; notebook `18_backtest_development.ipynb`: settings on Dev A/B, choice on the project's test period | `configs/wp8_strategy.json` | 2–3 days |
-| Freeze (`configs/wp8_frozen.json`, tag `strategy-freeze`), then `run_backtest.py` on the held-out days once; notebook `19_backtest_heldout.ipynb` reads `results/wp8/heldout/` only | the verdict of 12.6 | 1 day |
-| Optional: `Sync`/`slot0` download for exact price impact | re-run of 18 and 19 with exact impact, reported next to the estimate | 4–18 h unattended |
+Status as of 23 November 2026, evening.
 
+| # | Step | Output | Status |
+| --- | --- | --- | --- |
+| 1 | Download the held-out weeks (10 – 24 September, 8 October – 5 November) | `data/dex_swaps/chunks/` | running, nearly done |
+| 2 | `prices.py` with tests; price tables for the project weeks | `data/project/prices/` | done |
+| 3 | `strategy.py`, `backtest.py`, `performance.py`, `build_signals.py` with tests (signal leakage test, entry after the decision block, ladder, costs, sleeves, indicators) | code | done |
+| 4 | Signal of the tail strategy at every 6-hour decision, 2 July – 10 September (280 decisions) | `data/project/signal/` | running |
+| 5 | `token_data.build_extension` for 10 September – 5 November, its weekly validation, and its price tables | `data/project/extension/`, prices | next |
+| 6 | Hourly order-flow tables of new tokens for launch momentum (12.8), 2 July – 10 September | cached tables | next |
+| 7 | Notebook `16_prices.ipynb`: prices of known tokens across bases, the ETH price, tokens that cannot be priced, the impact estimate against observed swaps | checks | |
+| 8 | Notebook `17_demand_signal.ipynb`, development data only: does predicted demand match realized new buyers (each tail version against visible demand), do new buyers move prices, the hit rate per history group; for launch momentum, the share of young tokens that ever reach 3×, 5×, 20× and can still be sold there | `results/wp8/signal_dev.csv` | |
+| 9 | Notebook `18_backtest_development.ipynb`: every version and benchmark over its settings, tuned on Dev A/B and chosen on the project's test period; every indicator of 12.6 and 12.8, the deflated Sharpe ratio counting all settings tried | `configs/wp8_strategy.json` | |
+| 10 | **Checkpoint with the authors**: the development results and the proposed frozen strategies are shown before anything is frozen; the held-out weeks can be scored only once | decision | |
+| 11 | Freeze (`configs/wp8_frozen.json`, tag `strategy-freeze`, pushed), then `run_backtest.py` on the 42 held-out days once; results committed right after | `results/wp8/heldout/` | |
+| 12 | Notebook `19_backtest_heldout.ipynb` (reads `results/wp8/heldout/` only): both verdicts, every indicator, which positions carried the result | the verdict of 12.6 and 12.8 | |
+| 13 | Write-up: a WP8 section for the report, and a strategy view with real returns on the explorer page | report, `explorer/` | |
+| 14 | Optional: `Sync`/`slot0` download for exact price impact; re-run of 18 and 19 with it, reported next to the estimate | | |
+
+After step 13 the applications start (work packages 9–14,
+[`implementation_plan_applications.md`](implementation_plan_applications.md)),
+in the order WP9, WP10, WP12, WP11, WP13, WP14.
 
 ### 12.8 A third version: launch momentum (added 23 November 2026, before any tuning)
 
