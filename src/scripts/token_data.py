@@ -359,7 +359,8 @@ def build_extension(
     Writes legs.parquet (the extension's legs only), users, tokens and pools
     (the full, extended tables) and validation.csv to out_dir.
     """
-    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    # Times without a time zone are taken as UTC, like every time in the project.
+    start, end = (pd.Timestamp(t) if pd.Timestamp(t).tzinfo else pd.Timestamp(t, tz="UTC") for t in (start, end))
     out_dir.mkdir(parents=True, exist_ok=True)
     users = IdMap.from_table(pd.read_parquet(PROJECT_DIR / "users.parquet"), "user_id")
     project_tokens = load_tokens()
