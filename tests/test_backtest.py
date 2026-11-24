@@ -18,17 +18,34 @@ def priced(rows):
 
 
 def selection(buy_eth=100.0):
-    return pd.DataFrame([{"decision": T0, "token": 1, "pool": "p", "buy_eth_24h": buy_eth}])
+    # The decision lies between the swaps of blocks 10 and 11: block 11 is the decision block.
+    return pd.DataFrame([{"decision": T0 + MIN / 2, "token": 1, "pool": "p", "buy_eth_24h": buy_eth}])
 
 
 NO_COSTS = bt.Settings(holding_hours=1, gas_gwei=0, position_eth=0.5)
 
 
-def test_entry_is_a_later_block_than_the_decision_block_and_a_buy():
-    swaps = priced([(0, 10, "buy", 1.0, 1), (1, 11, "sell", 1.1, 1), (2, 12, "buy", 1.2, 1), (70, 20, "sell", 1.5, 1)])
+def test_entry_is_at_the_last_buy_before_the_decision_block():
+    swaps = priced([(-2, 9, "buy", 0.9, 1), (0, 10, "sell", 0.8, 1), (1, 11, "buy", 1.2, 1), (70, 20, "sell", 1.5, 1)])
     trades = bt.run(selection(), bt.PoolPrices(swaps), NO_COSTS)
-    assert trades["entry_price"].iloc[0] == 1.2, "block 10 is the decision block; the first later buy is at 1.2"
+    assert trades["entry_price"].iloc[0] == 0.9, "block 11 is the decision block; the last earlier buy is at 0.9"
+    assert trades["entry_time"].iloc[0] == np.datetime64((T0 + MIN / 2).tz_localize(None))
     assert trades["exit_price"].iloc[0] == 1.5 and trades["reason"].iloc[0] == "time"
+
+
+def test_a_sell_before_the_decision_is_not_an_exit():
+    swaps = priced([(-5, 8, "buy", 1.0, 1), (0, 10, "sell", 0.4, 1), (1, 11, "buy", 1.0, 1), (70, 20, "sell", 1.0, 1)])
+    settings = bt.Settings(holding_hours=1, gas_gwei=0, stop=0.5)
+    trades = bt.run(selection(), bt.PoolPrices(swaps), settings)
+    assert trades["reason"].iloc[0] == "time", "the fall to 0.4 happened before s, so the stop is not triggered"
+
+
+def test_a_token_never_traded_after_the_decision_is_a_total_loss_not_skipped():
+    # A rug pull: buyers until just before s, then nothing in this pool (the decision block comes from another pool).
+    swaps = priced([(-3, 8, "buy", 1.0, 1), (0, 10, "buy", 1.1, 1)])
+    other = priced([(1, 11, "buy", 5.0, 1)]).assign(pool="q")
+    trades = bt.run(selection(), bt.PoolPrices(pd.concat([swaps, other], ignore_index=True)), NO_COSTS)
+    assert trades["reason"].iloc[0] == "no exit" and trades["gross_return"].iloc[0] == -1.0
 
 
 def test_the_stop_exits_at_the_next_sell_after_the_fall_not_at_the_stop_level():

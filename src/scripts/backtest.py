@@ -2,10 +2,14 @@
 
 A position opened at decision time s in token i:
 
-  entry   the first BUY swap of i in its chosen pool in a block after the
-          decision block (the first block at or after s). Its price is what
-          a real buyer paid, so it already contains the pool's fee and that
-          buyer's own price impact.
+  entry   at s, at the price of the last BUY swap of i in its chosen pool
+          before the decision block (the first block at or after s). That is
+          what the last real buyer paid, so it already contains the pool's fee
+          and any token tax. Our own buy is the entry: we do not wait for
+          another buyer, so a token that is never traded again after s (a rug
+          pull, a dead launch) is a loss, not a position we skipped.
+          (Until 24 Nov 2026 the entry was the first buy swap after the
+          decision block, which silently dropped exactly those tokens.)
   exit    the first SELL swap at least H hours after entry, at the price a
           real seller got (again fee included). With a stop, the first sell
           swap after a sell price at or below (1 - stop) x entry price.
@@ -136,11 +140,12 @@ def ladder_exit(pool: dict, i: int, entry_price: float, horizon, give_up, settin
 def open_and_close(pool: dict, decision_block: int, entry_after: np.datetime64, settings: Settings) -> dict:
     """Entry and exit of one position in one pool (module docstring). Returns times, prices and the exit reason."""
     blocks, times, price, buy = pool["block"], pool["time"], pool["price"], pool["buy"]
-    after = np.flatnonzero((blocks > decision_block) & buy)
-    if len(after) == 0:
-        return {"entered": False}
-    i = after[0]
-    entry_time, entry_price = times[i], price[i]
+    known = np.flatnonzero(blocks < decision_block)  # swaps visible at s
+    earlier_buys = known[buy[known]]
+    if len(earlier_buys) == 0:
+        return {"entered": False}  # nobody has bought the token in this pool yet: no price to enter at
+    i = known[-1]  # exits look only at swaps after this one, that is after s
+    entry_time, entry_price = entry_after, price[earlier_buys[-1]]
     horizon = entry_time + np.timedelta64(int(settings.holding_hours * 3600), "s")
     give_up = horizon + np.timedelta64(24 * 3600, "s")
     if settings.take_profit is not None:
@@ -168,7 +173,7 @@ def run(selections: pd.DataFrame, pool_prices: PoolPrices, settings: Settings) -
     Columns of the result: decision, token, pool, size_eth, entry_time,
     entry_price, exit_time, exit_price, reason, impact, gas_share,
     gross_return (on observed prices), net_return (after our impact and gas).
-    Selections whose pool has no buy swap after the decision are listed with
+    Selections whose pool has no buy swap before the decision are listed with
     reason "not entered" and no return.
     """
     gas_eth = 2 * settings.gas_gwei * settings.gas_units * 1e-9

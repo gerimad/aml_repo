@@ -552,14 +552,14 @@ an exact impact is optional (12.7).
 | `prices.py` | `token_decimals`, `pool_fees`, `eth_price_per_block`, `swap_prices`, `impact_estimate` | 12.2 |
 | `strategy.py` | `tail_tokens(task)`, `predicted_inflow(task, lists, hit_rates, activity)`, `surprise(inflow, recent_volume)`, `universe(...)`, `select(scores, k)` | the signal and the rules of `trading_strategy_backtest.md` |
 | `performance.py` | `equity_curve`, `report` and the indicators of 12.6 | the portfolio built from sleeves; Sharpe, deflated Sharpe, Sortino, drawdown, Calmar, Kelly, trade statistics |
-| `backtest.py` | `run(decisions, prices, costs, settings) -> trades, periods` | opens positions at the first swap at least one block after $s$; exits at the first swap after $s + H$ or after the stop is crossed; a position that cannot be exited is worth zero; returns one row per trade and one row per 6-hour period with all open positions marked to the last swap price |
+| `backtest.py` | `run(decisions, prices, costs, settings) -> trades, periods` | opens positions at $s$ at the price of the last buy swap before the decision block (changed 24 Nov 2026, see project_direction.md); exits only on swaps after $s$; exits at the first swap after $s + H$ or after the stop is crossed; a position that cannot be exited is worth zero; returns one row per trade and one row per 6-hour period with all open positions marked to the last swap price |
 
 **Tests** (toy pools and swaps written by hand):
 
 - a swap's price is the same whichever token is `token0`, for V2 and V3 sign conventions;
 - entry never uses a swap in or before the decision block (the look-ahead test: deleting every swap after $s$ leaves the signal unchanged, as in the ranker's leakage test);
 - the stop exits at the first swap after the fall, not at the stop level;
-- a token with no swap after entry is valued at zero;
+- a token with no swap after entry is valued at zero, including a token never traded again after $s$ (not skipped);
 - costs: a round trip in a 0.3% pool with no price change loses 0.6% plus gas;
 - the head is removed exactly as `protocol.head_tokens` defines it.
 
