@@ -222,6 +222,10 @@ def launch_table(
     young = age[(age >= min_age_hours) & (age <= max_age_hours)].index
     flow = since[since["token"].isin(young)]
     flow = flow[flow["timestamp"] >= flow["token"].map(launch)]
+    # Plain strings from here on: the flow of young tokens is small, and pandas fails to align category-keyed
+    # results when one of them is empty (an hour in which no young token traded).
+    flow = flow.assign(token=flow["token"].astype(str), pool=flow["pool"].astype(str))
+    age.index = age.index.astype(str)
     last_hour = flow[flow["timestamp"] >= s - pd.Timedelta(hours=1)]
     by_pool = flow.groupby(["token", "pool"], observed=True)["volume_eth"].sum().reset_index()
     table = pd.DataFrame({

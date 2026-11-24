@@ -113,3 +113,20 @@ def test_launch_table_counts_order_flow_of_young_tokens_only():
     assert table.loc["A", "age_hours"] == pytest.approx(2.0)
     with_launch = st.launch_table(prices, t, launch=st.launch_times(prices)).set_index("token")
     pd.testing.assert_frame_equal(table, with_launch)
+
+
+def test_launch_table_handles_an_hour_without_trades_on_categorical_prices():
+    # A young token whose last swap is more than an hour before t, with prices stored as categories (as the
+    # builder loads them): the last-hour results are empty, which once broke the alignment of the columns.
+    t = pd.Timestamp("2026-07-16 10:00", tz="UTC")
+    prices = pd.DataFrame({
+        "timestamp": [t - pd.Timedelta(hours=3), t - pd.Timedelta(hours=2)], "tx_from": ["u1", "u2"],
+        "side": ["buy", "sell"], "volume_eth": [1.0, 1.0], "token": ["A", "A"], "pool": ["pA", "pA"],
+    })  # fmt: skip
+    prices["token"] = pd.Categorical(prices["token"], categories=["A"] + [f"other{i}" for i in range(300)])
+    for column in ("tx_from", "side", "pool"):
+        prices[column] = prices[column].astype("category")
+    table = st.launch_table(prices, t, launch=st.launch_times(prices)).set_index("token")
+    assert list(table.index) == ["A"]
+    assert table.loc["A", "buyers_since_launch"] == 1 and table.loc["A", "buyers_1h"] == 0
+    assert table.loc["A", "pool"] == "pA" and table.loc["A", "age_hours"] == pytest.approx(3.0)
