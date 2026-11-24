@@ -14,10 +14,19 @@ A position opened at decision time s in token i:
           real seller got (again fee included). With a stop, the first sell
           swap after a sell price at or below (1 - stop) x entry price.
           Without a sell swap within H + 24 hours the position is worth zero.
+  prices  only swaps of at least min_price_eth (0.01 ETH) count as prices,
+          for the entry, the exits and the impact estimate. After a rug pull a
+          pool often has only dust swaps (1e-10 ETH) at meaningless prices;
+          they are not prices anyone could trade at (added 24 Nov 2026).
   costs   on top of the observed prices: the extra price impact of our own
-          trade (impact_estimate) on entry and on exit, and gas for two swaps.
+          trade (impact_estimate) on entry and on exit, and gas for each swap
+          (one to buy, one per sale). The return is on what the position cost
+          (stake plus the buying gas), so it is never below -100%: a sale
+          whose proceeds would not cover its gas is not made.
   size    min(position_eth, cap x the pool's buy volume in the 24 hours
           before s); the sum of these over all positions is the capacity.
+          A position below min_position_eth (0.01 ETH) is not opened: its gas
+          would be a large part of it. It is listed as "not entered".
 
 Returns are in ETH: a token priced in USDC is converted at each swap's ETH
 price (prices.py), so "hold ETH" earns zero by construction.
@@ -45,6 +54,8 @@ class Settings:
     gas_units: int = 150_000
     take_profit: tuple[float, float] | None = None  # (m1, m2): sell half after m1 x entry, the rest after m2 x entry
     min_trigger_eth: float = 0.05  # a price only triggers an exit on a swap of at least this size
+    min_price_eth: float = 0.01  # smaller swaps are dust and are not used as prices at all
+    min_position_eth: float = 0.01  # smaller positions are not opened
     volume_column: str = "buy_eth_24h"  # the selection's column that caps the size
 
 
@@ -133,6 +144,7 @@ def ladder_exit(pool: dict, i: int, entry_price: float, horizon, give_up, settin
     return {
         "exit_time": max(known_times) if known_times else None,
         "exit_price": float(np.mean([p for _, p in exits])),
+        "sales": sum(1 for _, p in exits if p > 0),
         "reason": "ladder",
     }
 
@@ -167,6 +179,22 @@ def open_and_close(pool: dict, decision_block: int, entry_after: np.datetime64, 
     return {"entered": True, "entry_time": entry_time, "entry_price": entry_price, "exit_time": None, "exit_price": 0.0, "reason": "no exit"}
 
 
+def without_dust(pool: dict, min_eth: float) -> dict:
+    """The pool's swaps of at least min_eth: the only ones used as prices."""
+    keep = pool["volume"] >= min_eth
+    return {name: values[keep] for name, values in pool.items()}
+
+
+def net_return(size: float, entry_price: float, exit_price: float, impact: float, sales: int, gas_eth: float) -> float:
+    """Return on what the position cost: (proceeds after impact, minus the gas of the sales) / (stake + buying gas) - 1.
+
+    Proceeds that do not cover the sales' gas are kept as tokens (worth 0
+    here), so the return is never below -1.
+    """
+    proceeds = size * exit_price * (1 - impact) / (entry_price * (1 + impact))
+    return max(proceeds - sales * gas_eth, 0.0) / (size + gas_eth) - 1
+
+
 def run(selections: pd.DataFrame, pool_prices: PoolPrices, settings: Settings) -> pd.DataFrame:
     """One row per position of the selections (columns decision, token, pool, buy_eth_24h).
 
@@ -176,10 +204,12 @@ def run(selections: pd.DataFrame, pool_prices: PoolPrices, settings: Settings) -
     Selections whose pool has no buy swap before the decision are listed with
     reason "not entered" and no return.
     """
-    gas_eth = 2 * settings.gas_gwei * settings.gas_units * 1e-9
+    gas_eth = settings.gas_gwei * settings.gas_units * 1e-9  # one swap
     rows = []
     for item in selections.itertuples(index=False):
         pool = pool_prices.pool(item.pool)
+        if pool is not None:
+            pool = without_dust(pool, settings.min_price_eth)
         decision = np.datetime64(pd.Timestamp(item.decision).tz_convert("UTC").tz_localize(None))
         base = {"decision": item.decision, "token": item.token, "pool": item.pool}
         decision_block = pool_prices.first_block_at(decision)
@@ -188,14 +218,18 @@ def run(selections: pd.DataFrame, pool_prices: PoolPrices, settings: Settings) -
             continue
         size = min(settings.position_eth, settings.cap * float(getattr(item, settings.volume_column)))
         trade = open_and_close(pool, decision_block, decision, settings)
-        if not trade["entered"] or size <= 0:
-            rows.append({**base, "reason": "not entered"})
+        if not trade["entered"]:
+            rows.append({**base, "reason": "not entered", "skip": "no earlier buy"})
+            continue
+        if size < settings.min_position_eth:
+            rows.append({**base, "reason": "not entered", "skip": "too small", "size_eth": size})
             continue
         impact = impact_estimate(pool, decision, size)
+        sales = trade.get("sales", 1 if trade["exit_price"] > 0 else 0)
         gross = trade["exit_price"] / trade["entry_price"] - 1
-        net = trade["exit_price"] * (1 - impact) / (trade["entry_price"] * (1 + impact)) - 1 - gas_eth / size
+        net = net_return(size, trade["entry_price"], trade["exit_price"], impact, sales, gas_eth)
         rows.append({**base, "size_eth": size, **{k: trade[k] for k in ("entry_time", "entry_price", "exit_time", "exit_price", "reason")},
-                     "impact": impact, "gas_share": gas_eth / size, "gross_return": gross, "net_return": net})  # fmt: skip
+                     "impact": impact, "gas_share": (1 + sales) * gas_eth / size, "gross_return": gross, "net_return": net})  # fmt: skip
     return pd.DataFrame(rows)
 
 

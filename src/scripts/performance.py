@@ -153,10 +153,12 @@ def deflated_sharpe(daily: pd.Series, trials: int, trial_sharpes_sd: float) -> f
     return float(sps.norm.cdf((sr - sr0) * math.sqrt(n - 1) / denominator))
 
 
-def report(trades: pd.DataFrame, holding_hours: float, column: str = "net_return", trials: int = 1, trial_sharpes_sd: float = 0.0) -> dict:
-    """All indicators of one backtest, as one row."""
+def report(
+    trades: pd.DataFrame, holding_hours: float, column: str = "net_return", trials: int = 1, trial_sharpes_sd: float = 0.0, interval_hours: float = 6
+) -> dict:
+    """All indicators of one backtest, as one row. interval_hours is the time between decisions (1 for launch momentum)."""
     entered = trades[trades["reason"] != "not entered"]
-    equity = equity_curve(trades, holding_hours, column=column)
+    equity = equity_curve(trades, holding_hours, interval_hours=interval_hours, column=column)
     daily = daily_returns_from_equity(equity)
     drawdown, drawdown_days = max_drawdown(equity)
     years = len(daily) / DAYS_PER_YEAR
