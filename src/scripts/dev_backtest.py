@@ -238,7 +238,7 @@ def paired_difference(a: pd.Series, b: pd.Series) -> pd.Series:
     return a.reindex(days, fill_value=0.0) - b.reindex(days, fill_value=0.0)
 
 
-def choose(table: pd.DataFrame, score: str, standard_error: str, simpler: list[tuple[str, bool]]) -> pd.Series:
+def choose(table: pd.DataFrame, score: str, standard_error: str, simpler: list[tuple[str, bool]]) -> pd.Series | None:
     """The chosen row: the highest score, except that rows within one standard error of the best go to the simplest.
 
     simpler lists (column, ascending) pairs in order of priority, e.g.
@@ -246,6 +246,9 @@ def choose(table: pd.DataFrame, score: str, standard_error: str, simpler: list[t
     K first, then counting accounts, then no stop. Among equally simple rows
     the higher score wins.
     """
+    table = table[np.isfinite(table[score]) & np.isfinite(table[standard_error])]  # a portfolio that went to zero has no finite score
+    if table.empty:
+        return None
     best = table.loc[table[score].idxmax()]
     close = table[table[score] >= best[score] - best[standard_error]]
     columns = [c for c, _ in simpler] + [score]
