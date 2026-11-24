@@ -22,3 +22,6 @@ results/wp9/points/
 
 # WP10 per-user scores for the sensitivity analysis: rebuilt by src/scripts/build_farm_sensitivity.py
 data/project/wp10/
+
+# WP17 token tables: about a million rows, rebuilt by src/scripts/build_demand_forecast.py
+results/wp17/
