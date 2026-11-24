@@ -92,21 +92,30 @@ def window_features(pairs: pd.DataFrame, legs: pd.DataFrame, first: pd.DataFrame
     out["unexplained_share"] = grouped["unexplained"].mean()
     out["low_rank_share"] = grouped["active_percentile"].agg(lambda p: (p > 0.9).mean())
 
+    out = out.join(baseline_features(legs, first, tokens, d))
+    out = out.reset_index()
+    out.insert(0, "decision", d)
+    out.insert(0, "window_start", s)
+    out.insert(0, "point", task.t)
+    return out
+
+
+def baseline_features(legs: pd.DataFrame, first: pd.DataFrame, tokens, d: pd.Timestamp) -> pd.DataFrame:
+    """What anyone can see of each token at d (index: token): age_days, accounts_before, accounts_last_hour,
+    buy_share (of its trades in the 24 hours before d) and the logs the models use."""
+    tokens = pd.Index(tokens, name="token")
     before = legs[(legs["timestamp"] < d) & legs["token"].isin(tokens)]
+    out = pd.DataFrame(index=tokens)
     born = first.groupby("token")["first_time"].min()
     out["age_days"] = (d - born.reindex(tokens)).dt.total_seconds() / 86400
     out["accounts_before"] = before.groupby("token")["user"].nunique().reindex(tokens).fillna(0)
     hour = before[before["timestamp"] >= d - pd.Timedelta(hours=1)]
     out["accounts_last_hour"] = hour.groupby("token")["user"].nunique().reindex(tokens).fillna(0)
-    in_window = before[before["timestamp"] >= s]
+    in_window = before[before["timestamp"] >= d - WINDOW]
     out["buy_share"] = (in_window["side"] == "buy").groupby(in_window["token"]).mean().reindex(tokens)
     out["log_age_days"] = np.log1p(out["age_days"])
     out["log_accounts_before"] = np.log1p(out["accounts_before"])
     out["log_accounts_last_hour"] = np.log1p(out["accounts_last_hour"])
-    out = out.reset_index()
-    out.insert(0, "decision", d)
-    out.insert(0, "window_start", s)
-    out.insert(0, "point", task.t)
     return out
 
 

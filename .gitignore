@@ -28,3 +28,6 @@ results/wp17/
 
 # WP13 token windows: rebuilt by src/scripts/build_scam_push.py
 results/wp13/
+
+# WP16 listed tokens with risk and label: rebuilt by src/scripts/build_safer.py
+results/wp16/list_tokens.parquet

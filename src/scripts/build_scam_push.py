@@ -24,11 +24,13 @@ import token_data as td
 OUT = pc.RESULTS_DIR / "wp13"
 
 
-def token_swaps(addresses: set[str]) -> pd.DataFrame:
-    """Priced swaps of the given token addresses over the whole price data (only the columns the label needs)."""
+def token_swaps(addresses: set[str], start=None, end=None) -> pd.DataFrame:
+    """Priced swaps of the given token addresses (only the columns the label needs), optionally in [start, end)."""
     dataset = pads.dataset(sorted(px.PRICES_DIR.glob("prices_*.parquet")), format="parquet")
-    table = dataset.to_table(columns=["timestamp", "pool", "token", "price_eth", "volume_eth"],
-                             filter=pads.field("token").isin(sorted(addresses)))  # fmt: skip
+    condition = pads.field("token").isin(sorted(addresses))
+    if start is not None:
+        condition = condition & (pads.field("timestamp") >= start) & (pads.field("timestamp") < end)
+    table = dataset.to_table(columns=["timestamp", "pool", "token", "price_eth", "volume_eth"], filter=condition)
     return table.to_pandas()
 
 
