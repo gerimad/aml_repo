@@ -646,7 +646,7 @@ Status as of 23 November 2026, evening.
 | 10 | **Checkpoint with the authors**: the development results and the proposed frozen strategies are shown before anything is frozen; the held-out weeks can be scored only once | decision | done 24 Nov: WP8 closed as negative, steps 11, 12 and 14 dropped (`project_direction.md`) |
 | 11 | Freeze (`configs/wp8_frozen.json`, tag `strategy-freeze`, pushed), then `run_backtest.py` on the 42 held-out days once; results committed right after | `results/wp8/heldout/` | |
 | 12 | Notebook `19_backtest_heldout.ipynb` (reads `results/wp8/heldout/` only): both verdicts, every indicator, which positions carried the result | the verdict of 12.6 and 12.8 | |
-| 13 | Write-up: a WP8 section for the report, and a strategy view with real returns on the explorer page | report, `explorer/` | report section done 24 Nov (section 9 of `final_report.pdf`); no explorer strategy view, since no strategy was frozen |
+| 13 | Write-up: a WP8 section for the report, and a strategy view with real returns on the explorer page | report, `explorer/` | report section done 24 Nov (section 8 of `final_report.pdf`); no explorer strategy view, since no strategy was frozen |
 | 14 | Optional: `Sync`/`slot0` download for exact price impact; re-run of 18 and 19 with it, reported next to the estimate | | |
 
 After step 13 the applications start (work packages 9–14,
