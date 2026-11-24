@@ -1,6 +1,6 @@
 # Implementation plan: applications of the recommender
 
-How five applications of the project's recommender are built, checked and
+How eight applications of the project's recommender are built, checked and
 judged. They use what the project already produced: the frozen models of
 `configs/frozen.json`, the neighbour similarities, the per-point tasks, and
 the farm groups found in notebook 11. Each is a work package with its own
@@ -14,6 +14,9 @@ code, tests, notebook, success criterion and stated limits.
 | 12 | Token similarity map | clusters of tokens and a "related tokens" panel | partial: held-out co-adoption |
 | 13 | Scam-push detection | a token risk score from adoption the model cannot explain | exact outcome from prices (collapse) |
 | 14 | Unusual-activity alerts | a per-account alert for trades far outside its own pattern | weak: needs transfer logs and a stated rule |
+| 15 | Likely buyers of a token | for a token, the accounts most likely to pick it up (airdrop or promotion audience) | exact (who buys in the next two days) |
+| 16 | Safer recommendations | how often lists contain tokens that collapse, and a re-ranking that lowers it | exact outcome from prices (collapse) |
+| 17 | Forecasting new buyers | the number of new buyers per token in the next 48 hours | exact (new buyers) |
 
 **Rules that carry over from the project** ([`project_direction.md`](project_direction.md)):
 simple, explained code; reusable logic in `src/scripts/` with tests;
@@ -385,6 +388,173 @@ account before $s$.
 
 ---
 
+## 15. WP15 Likely buyers of a token (the recommender read by token)
+
+**Goal:** for a token, rank the accounts most likely to pick it up in the
+next two days. This is the project's score matrix read by column instead of by
+row. Uses: choosing who receives an airdrop or a promotion, or whom a wallet
+shows a token to. Added 24 November 2026 (`project_direction.md`).
+
+### 15.1 Method
+
+At each evaluation point $t$:
+
+- **Audience:** the accounts with at least one token in their 14-day window
+  that have never traded the token before $t$ (the same accounts a list could
+  go to).
+- **Tokens scored:** the tokens of the universe with at least 10 new buyers
+  among the audience in the target window $[t, t + 2\text{ days})$.
+  Conditioning on the outcome only chooses which tokens are scored, as the
+  project chooses its evaluated accounts; every method is scored on the same
+  tokens.
+- **Model score:** the frozen fixed blend's score $s_{ui}$, read down the
+  column of token $i$. The blend's popularity part is the same for every
+  account (each part is scaled to a maximum of 1 per account, and popularity
+  does not depend on the account), so the order comes from the neighbour part.
+  Accounts with no co-trading path to $i$ tie at the bottom and are ordered by
+  the activity baseline.
+- **Baselines:** (a) **activity:** accounts ordered by the number of tokens in
+  their 14-day window, the same order for every token (the obvious "send it to
+  the most active accounts"); (b) **random** order.
+- **Metrics per token:** recall@1000 (share of the token's new buyers in the
+  first 1,000 accounts) and precision@100; mean over the scored tokens of a
+  point. Reported separately for head and tail tokens (`protocol.head_tokens`).
+
+The LambdaMART ranker is left out: it scores only 500 candidate tokens per
+account, so most of a token's column is missing.
+
+### 15.2 Criterion (stated now)
+
+Nothing is tuned (the blend is frozen), so Dev B and test are both reported.
+**Success:** on the 14 test points, the mean paired difference in
+recall@1000 between the model and the activity baseline is positive, with a
+95% bootstrap interval over points that excludes zero. Reported again with
+the WP10 farm members removed from the audience and from the buyers.
+
+| Code | Spec |
+| --- | --- |
+| `audience.py`: `token_columns(task, scorer, tokens, rows)` | the blend's scores for the given tokens and accounts, scored in account batches as in `evaluate_point` |
+| `audience.py`: `rank_accounts(scores, tiebreak)` | the audience order per token |
+| `audience.py`: `audience_metrics(order, buyers, k)` | recall@k and precision@k per token |
+
+**Tests:** a token's column equals the matching entries of the row scores; an
+account that traded the token before $t$ is never in its audience; with a
+perfect score every buyer is in the first places (recall@k = 1 when buyers
+≤ k); ties are broken by activity, not by account id.
+
+**Depends on:** frozen models; WP10 for the farm-free version.
+**Notebook:** `26_audience.ipynb`. **Effort:** 1 day.
+
+---
+
+## 16. WP16 Safer recommendations
+
+**Goal:** measure, and then reduce, how often the recommender lists tokens
+that collapse soon after. A wallet could not show recommendations that steer
+people into rug pulls. The question is what removing them costs in recall.
+Added 24 November 2026.
+
+### 16.1 Measuring the harm
+
+At each evaluation point, for the fixed blend's top-10 lists:
+
+- **collapsed share:** the share of listed tokens that collapse within 72
+  hours after $t$, by WP13's label (13.2, from prices only);
+- **harmful hits:** the share of hits (listed and then bought) whose token
+  collapses.
+
+Both are reported for the frozen models on Dev B and test before anything
+is changed.
+
+### 16.2 The re-ranking
+
+The blend's first 50 tokens per account are re-ordered by
+$s_{ui} - \lambda \, r_i(t)$, with $s_{ui}$ scaled to a maximum of 1 per
+account and $r_i(t)$ the token's collapse risk at $t$:
+
+- $r_i(t)$ is WP13's chosen score, computed from the 24 hours before $t$ only.
+  Tokens WP13 cannot score (fewer than 20 new accounts in those 24 hours) get
+  the Dev A collapse rate of such tokens in their age band (under 1 day,
+  1 – 7 days, over 7 days).
+- $\lambda \in \{0, 0.1, 0.2, 0.5, 1, 2\}$. The WP13 score is trained on Dev
+  A, so $\lambda$ is chosen on Dev B: the largest fall in collapsed share
+  whose loss in recall@10 is at most 5% of the unchanged recall.
+
+### 16.3 Criterion (stated now)
+
+**Success:** on the test points, with the chosen $\lambda$, the collapsed
+share falls (mean paired difference over points negative, 95% bootstrap
+interval excluding zero) and recall@10 falls by at most 5% of its unchanged
+value. The whole trade-off curve over $\lambda$ is reported in either case.
+The last test points need prices up to 72 hours after 8 September. These
+come from the downloaded held-out weeks and are used only as labels.
+
+| Code | Spec |
+| --- | --- |
+| `safer.py`: `list_outcomes(lists, task, collapsed)` | collapsed share and harmful hits per point |
+| `safer.py`: `rerank(scores, risk, lam, depth)` | the re-ordered top-10 |
+| `safer.py`: `tradeoff(points, lams)` | recall and collapsed share per $\lambda$ and point |
+
+**Tests:** $\lambda = 0$ gives the frozen lists exactly; a risk of 1 on one
+token with a large $\lambda$ removes it from every list; re-ranking only
+reorders the first 50 tokens; the risk at $t$ uses no trade at or after $t$.
+
+**Depends on:** WP13 (score and label), WP8's `prices.py`.
+**Notebook:** `27_safer_recommendations.ipynb`. **Effort:** 1–2 days after
+WP13.
+
+---
+
+## 17. WP17 Forecasting a token's new buyers
+
+**Goal:** forecast how many new buyers each active token gets in the next 48
+hours, by adding up the accounts' predictions. Buyer counts drive volume and
+fees, which matter to liquidity providers and token teams. WP8 showed that
+predicted demand does not give trading profit. This asks only whether the
+count itself is forecastable, which needs no prices. Added 24 November 2026.
+
+### 17.1 Method
+
+At each evaluation point $t$, for every token with at least one buyer in the
+14 days before $t$:
+
+- **Target:** $N_i$ = accounts whose first trade of $i$ ever falls in
+  $[t, t + 2\text{ days})$, counted among accounts with a history before $t$
+  (the accounts the recommender can see). The count among all accounts,
+  brand-new ones included, is reported alongside.
+- **Recommender feature:** $L_i$ = the number of accounts with $i$ in their
+  top-50 list under the frozen fixed blend (the demand signal of notebook 17,
+  for every active token).
+- **Baseline features:** new buyers in the 48 hours before $t$ (persistence),
+  accounts in the last 24 hours, and token age.
+- **Models:** linear regressions of $\log(1 + N_i)$, (a) on the baseline
+  features and (b) on the baseline features plus $\log(1 + L_i)$. Both are
+  fitted on Dev A points.
+
+### 17.2 Criterion (stated now)
+
+**Success:** on the test points, model (b) has a lower mean absolute error in
+$\log(1 + N_i)$ than model (a). The test is the mean paired difference over
+points, with a 95% bootstrap interval that excludes zero. Dev B is reported
+first. Spearman correlation per point and the error for the tail tokens
+alone are reported alongside.
+
+| Code | Spec |
+| --- | --- |
+| `demand_forecast.py`: `new_buyers(legs, t, hours, known_only)` | $N_i$ and the persistence feature |
+| `demand_forecast.py`: `list_counts(task, scorer, depth)` | $L_i$ per token |
+| `demand_forecast.py`: `fit_and_score(train, test, features)` | per-point errors of a model |
+
+**Tests:** a buyer who traded the token before $t$ is not counted; the
+persistence feature uses only the 48 hours before $t$; $L_i$ counts each
+account at most once per token; tokens with no buyer in the 14 days are not
+scored.
+
+**Depends on:** frozen models; reuses notebook 17's new-buyer counting.
+**Notebook:** `28_buyer_forecast.ipynb`. **Effort:** 1 day.
+
+---
+
 ## Order of work and effort
 
 | Step | Depends on | Effort | Checkpoint |
@@ -396,6 +566,9 @@ account before $s$.
 | WP13 scam push | WP9, WP10, WP8 `prices.py` | 2–3 days | AUC difference on Dev B and test |
 | Transfer download (start early, unattended) | none | size on one week first | logs for the project weeks |
 | WP14 alerts | WP9, transfers | 3–4 days | alert rate, silence comparison, case review |
+| WP15 likely buyers | frozen models (WP10 for the farm-free version) | 1 day | recall@1000 against activity on test |
+| WP17 buyer forecast | frozen models | 1 day | error with and without the list counts on test |
+| WP16 safer recommendations | WP13 | 1–2 days | collapsed share against recall, $\lambda$ chosen on Dev B |
 
 About three weeks in total, most of it parallel to WP8.
 
@@ -403,5 +576,8 @@ About three weeks in total, most of it parallel to WP8.
   limitation) and WP12 (mostly built from existing similarities).
 - **Most novel:** WP13; its label is exact and its criterion is stated in
   advance.
+- **Added 24 November (15 – 17):** each has an exact outcome from the data
+  and uses the recommender itself. WP15 and WP17 are cheap and can follow
+  WP10; WP16 follows WP13.
 - **Weakest evidence:** WP14; it can describe and rank suspicious activity
   but cannot measure how often it is right.
