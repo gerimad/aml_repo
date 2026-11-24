@@ -19,3 +19,6 @@ results/wp7/test_pair_outcomes.csv
 # WP9 pair tables: large, rebuilt by src/scripts/build_expectedness.py
 results/wp9/*.parquet
 results/wp9/points/
+
+# WP10 per-user scores for the sensitivity analysis: rebuilt by src/scripts/build_farm_sensitivity.py
+data/project/wp10/

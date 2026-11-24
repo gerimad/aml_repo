@@ -11,6 +11,7 @@ dependencies = [
     "hmmlearn>=0.3.3",
     "lightgbm>=4.7.0",
     "matplotlib>=3.11.2",
+    "networkx>=3.7",
     "numpy>=2.5.3",
     "pandas>=3.0.6",
     "pyarrow>=26.0.0",
