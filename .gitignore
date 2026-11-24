@@ -25,3 +25,6 @@ data/project/wp10/
 
 # WP17 token tables: about a million rows, rebuilt by src/scripts/build_demand_forecast.py
 results/wp17/
+
+# WP13 token windows: rebuilt by src/scripts/build_scam_push.py
+results/wp13/
