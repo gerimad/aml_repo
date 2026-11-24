@@ -4,7 +4,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap">
 <style>
-/* Layout: a working instrument panel — header with the verdict, three views switched by tabs, each a two-pane grid that stacks on phones. */
+/* Layout: a working instrument panel — header with the verdict, four views switched by tabs, each a two-pane grid that stacks on phones. */
 :root {
   --bg: #f3f5f8;
   --panel: #ffffff;
@@ -168,6 +168,7 @@ footer { color: var(--ink-3); font-size: 0.8rem; }
     <a href="#accounts" data-view="accounts">Accounts</a>
     <a href="#results" data-view="results">Test results</a>
     <a href="#signal" data-view="signal">Strategy signal</a>
+    <a href="#map" data-view="map">Token map</a>
   </nav>
 
   <!-- ACCOUNTS -->
@@ -221,7 +222,7 @@ footer { color: var(--ink-3); font-size: 0.8rem; }
 
   <!-- SIGNAL -->
   <section id="view-signal" class="stack" hidden>
-    <div class="note">This view shows the <b>demand signal</b> of the planned trading strategy on real data, and what each selection rule would have picked. Prices, costs and returns are not backtested yet (work package 8). What you can check here is the first link: do tokens the recommender puts on many lists get more new buyers?</div>
+    <div class="note">This view shows the <b>demand signal</b> of the trading strategy of work package 8 on real data, and what each selection rule would have picked. The backtest (notebook 18) found that every version loses money after costs, and the package was closed as a negative result. What you can check here is the first link: do tokens the recommender puts on many lists get more new buyers?</div>
     <div class="panel stack">
       <div class="row">
         <label class="label" for="sig-point">Decision time</label>
@@ -270,7 +271,25 @@ footer { color: var(--ink-3); font-size: 0.8rem; }
     </div>
   </section>
 
-  <footer>Data: the project's frozen models and results (notebooks 11–15). Account addresses are shortened; token names are on-chain symbols where readable.</footer>
+  <!-- MAP -->
+  <section id="view-map" class="stack" hidden>
+    <p class="muted">Tokens placed by who trades them together: the frozen neighbour model's similarity on the last 14 days, laid out in two dimensions (t-SNE) for the 3,000 tokens with the most accounts at the last test point. Colours are clusters of tokens traded by the same accounts. Click a token, or search for it, to see its related tokens.</p>
+    <div class="stats" id="map-stats"></div>
+    <div class="grid2">
+      <div class="panel stack">
+        <label class="label" for="map-search">Find a token</label>
+        <input id="map-search" list="map-names" placeholder="symbol, e.g. PEPE" style="font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 8px">
+        <datalist id="map-names"></datalist>
+        <div id="map-detail" class="stack"></div>
+      </div>
+      <div class="panel stack">
+        <svg class="chart" id="map-chart" viewBox="0 0 700 560" role="img" aria-label="Map of tokens by co-trading"></svg>
+        <p class="small muted" id="map-caption"></p>
+      </div>
+    </div>
+  </section>
+
+  <footer>Data: the project's frozen models and results (notebooks 11–15; token map: notebook 23). Account addresses are shortened; token names are on-chain symbols where readable.</footer>
 </div>
 
 <script>
@@ -302,13 +321,14 @@ footer { color: var(--ink-3); font-size: 0.8rem; }
   ];
 
   // ---------- views ----------
-  const views = ["accounts", "results", "signal"];
+  const views = ["accounts", "results", "signal", "map"];
   function show() {
     const name = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : "accounts";
     for (const v of views) document.getElementById("view-" + v).hidden = v !== name;
     document.querySelectorAll("nav a").forEach((a) => { if (a.dataset.view === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
     if (name === "results" && state.summary) drawResults();
     if (name === "signal" && state.strategy) drawSignal();
+    if (name === "map" && state.map) drawMap();
   }
   window.addEventListener("hashchange", show);
 
@@ -528,6 +548,68 @@ footer { color: var(--ink-3); font-size: 0.8rem; }
                stat("Break-even rise", `${((1 / (1 - roundTrip) - 1) * 100).toFixed(2)}%`, "the price must rise this much"),
                stat("Gas, both swaps", `${gasEth.toFixed(5)} ETH`, `${((gasEth / size) * 100).toFixed(2)}% of the position`));
   }
+
+  // ---------- token map ----------
+  const CLUSTER_COLOURS = ["--s-blend", "--s-rank", "--s-time", "--s-amber", "--accent", "--warn", "--hit", "--s-base"];
+  function clusterColour(c) { return c != null && c < CLUSTER_COLOURS.length ? css(CLUSTER_COLOURS[c]) : css("--line"); }
+  function drawMap() {
+    const m = state.map, svg = document.getElementById("map-chart");
+    svg.replaceChildren();
+    const xs = m.tokens.map((t) => t.x), ys = m.tokens.map((t) => t.y);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    const X = (x) => 12 + ((x - x0) / (x1 - x0)) * 676, Y = (y) => 12 + ((y - y0) / (y1 - y0)) * 536;
+    const selected = m.tokens[state.mapToken];
+    const related = new Set(selected ? selected.related : []);
+    const order = m.tokens.map((t, i) => i).sort((a, b) => (m.tokens[a].cluster ?? 99) - (m.tokens[b].cluster ?? 99)).reverse();
+    for (const i of order) {
+      const t = m.tokens[i];
+      const r = Math.max(1.6, Math.min(7, Math.sqrt(t.accounts) / 6));
+      const c = svgEl("circle", { cx: X(t.x), cy: Y(t.y), r, fill: clusterColour(t.cluster), "fill-opacity": selected && !related.has(t.name) && i !== state.mapToken ? 0.18 : 0.75, style: "cursor:pointer" });
+      c.append(svgEl("title"));
+      c.lastChild.textContent = `${t.name} · cluster ${t.cluster ?? "–"} · ${t.accounts.toLocaleString()} accounts`;
+      c.addEventListener("click", () => { state.mapToken = i; drawMap(); });
+      svg.append(c);
+    }
+    if (selected) {
+      for (const t of m.tokens) if (related.has(t.name)) svg.append(svgEl("line", { x1: X(selected.x), y1: Y(selected.y), x2: X(t.x), y2: Y(t.y), stroke: css("--ink-2"), "stroke-width": 0.8 }));
+      svg.append(svgEl("circle", { cx: X(selected.x), cy: Y(selected.y), r: 7, fill: "none", stroke: css("--ink"), "stroke-width": 2 }));
+    }
+    const d = document.getElementById("map-detail");
+    d.replaceChildren();
+    if (!selected) { d.append(el("p", { class: "small muted", text: "No token selected." })); return; }
+    d.append(el("h2", { text: selected.name }));
+    d.append(el("p", { class: "small muted num", text: `Cluster ${selected.cluster ?? "–"} · ${selected.accounts.toLocaleString()} accounts in the last 14 days` }));
+    const list = el("div", { class: "list" }, el("h3", { text: "Related tokens" }));
+    const ol = el("ol");
+    for (const r of selected.related) {
+      const onMap = m.tokens.findIndex((t) => t.name === r);
+      const li = el("li", {}, el("span", { class: "tok", text: r }), el("span", { class: "score", text: onMap >= 0 ? "on map" : "" }));
+      if (onMap >= 0) { li.style.cursor = "pointer"; li.addEventListener("click", () => { state.mapToken = onMap; drawMap(); }); }
+      ol.append(li);
+    }
+    list.append(ol);
+    d.append(list);
+  }
+  function setupMap(m) {
+    state.map = m;
+    state.mapToken = m.tokens.reduce((best, t, i) => (t.accounts > m.tokens[best].accounts ? i : best), 0);
+    const names = document.getElementById("map-names");
+    for (const t of m.tokens) names.append(el("option", { value: t.name }));
+    document.getElementById("map-search").addEventListener("change", (e) => {
+      const i = m.tokens.findIndex((t) => t.name.toLowerCase() === e.target.value.trim().toLowerCase());
+      if (i >= 0) { state.mapToken = i; drawMap(); }
+    });
+    const stats = document.getElementById("map-stats");
+    const rate = (part, key) => (m.hit_rates[part] ? (100 * m.hit_rates[part][key]).toFixed(1) + "%" : "–");
+    const stat = (label, value, win) => el("div", { class: "panel stat" + (win ? " win" : "") }, el("span", { class: "label", text: label }), el("span", { class: "v", text: value }));
+    stats.append(stat("Next new token among the 10 related (test)", rate("test", "related"), true));
+    stats.append(stat("…among the 10 most popular (test)", rate("test", "popular")));
+    const c = m.check.test;
+    stats.append(stat("Difference, 95% interval", c ? `${(100 * c.mean_difference).toFixed(1)} pts [${(100 * c.interval_low).toFixed(1)}, ${(100 * c.interval_high).toFixed(1)}]` : "–"));
+    document.getElementById("map-caption").textContent = `Point ${m.point}; clusters by Louvain at resolution ${m.resolution}. The 8 largest clusters are coloured, the others grey; dot size grows with accounts. Hover for names.`;
+    if (location.hash === "#map") drawMap();
+  }
+  fetch("token_map.json").then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) setupMap(m); }).catch(() => {});
 
   // ---------- wiring ----------
   document.querySelectorAll("[data-metric]").forEach((b) => b.addEventListener("click", () => {
