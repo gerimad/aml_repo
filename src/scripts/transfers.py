@@ -7,7 +7,9 @@ Plain ETH transfers need traces, which the free endpoints do not serve; they
 are not covered.
 
 Downloaded like the swaps (dex_swaps.py): eth_getLogs over block chunks, one
-Parquet file per chunk in data/transfers/chunks/, safe to restart.
+Parquet file per chunk in data/transfers/dex_chunks/, safe to restart. Only
+transfers sent by accounts of the project's trade data are kept (WP14 asks
+where an account sends its proceeds).
 
 Usage, from the repository root (first block, number of blocks):
 
@@ -67,12 +69,24 @@ def fetch_transfer_logs(start: int, end: int, url: str = ds.LOGS_RPC, session=No
     return pd.DataFrame(records, columns=COLUMNS)
 
 
-def download_chunk(start: int, end: int, out_dir: Path = DATA_DIR) -> Path:
-    """Download blocks start..end into one Parquet file, unless it already exists."""
-    path = out_dir / "chunks" / f"transfers_{start}_{end}.parquet"
+def dex_senders() -> set[str]:
+    """Addresses of every account in the project's trade data (project and extension weeks)."""
+    import token_data as td
+
+    return set(pd.read_parquet(td.PROJECT_DIR / "users.parquet")["address"])
+
+
+def download_chunk(start: int, end: int, senders: set[str], out_dir: Path = DATA_DIR) -> Path:
+    """Download blocks start..end and keep the transfers sent by the given accounts, unless the file already exists.
+
+    Only about 8% of base-token transfers are sent by accounts that trade on the
+    DEXes; keeping only those makes a week about 80 MB instead of about 950 MB.
+    """
+    path = out_dir / "dex_chunks" / f"transfers_{start}_{end}.parquet"
     if path.exists():
         return path
     table = fetch_transfer_logs(start, end, session=requests.Session())
+    table = table[table["sender"].isin(senders)]
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     table.to_parquet(temporary)
@@ -83,15 +97,16 @@ def download_chunk(start: int, end: int, out_dir: Path = DATA_DIR) -> Path:
 def download_window(start: int, n_blocks: int, out_dir: Path = DATA_DIR, workers: int = 1) -> None:
     """Download a range of blocks in chunks of 1,000. Safe to restart. One worker by default: the free node rate-limits
     parallel log queries (found on the first sizing run)."""
+    senders = dex_senders()
     ranges = ds.chunk_ranges(start, n_blocks)
     with ThreadPoolExecutor(workers) as pool:
-        for i, path in enumerate(pool.map(lambda r: download_chunk(*r, out_dir), ranges), 1):
+        for i, path in enumerate(pool.map(lambda r: download_chunk(*r, senders, out_dir), ranges), 1):
             print(f"{i}/{len(ranges)} {path.name}", flush=True)
 
 
 def load_transfers(out_dir: Path = DATA_DIR) -> pd.DataFrame:
     """Every downloaded chunk, in chain order."""
-    parts = [pd.read_parquet(p) for p in sorted((out_dir / "chunks").glob("transfers_*.parquet"))]
+    parts = [pd.read_parquet(p) for p in sorted((out_dir / "dex_chunks").glob("transfers_*.parquet"))]
     return pd.concat(parts, ignore_index=True).sort_values(["block", "log_index"], ignore_index=True)
 
 
