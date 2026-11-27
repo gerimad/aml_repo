@@ -31,3 +31,5 @@ results/wp13/
 
 # WP16 listed tokens with risk and label: rebuilt by src/scripts/build_safer.py
 results/wp16/list_tokens.parquet
+results/wp19/points/
+results/wp18/points/

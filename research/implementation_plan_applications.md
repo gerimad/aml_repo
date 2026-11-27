@@ -17,6 +17,8 @@ code, tests, notebook, success criterion and stated limits.
 | 15 | Likely buyers of a token | for a token, the accounts most likely to pick it up (airdrop or promotion audience) | exact (who buys in the next two days) |
 | 16 | Safer recommendations | how often lists contain tokens that collapse, and a re-ranking that lowers it | exact outcome from prices (collapse) |
 | 17 | Forecasting new buyers | the number of new buyers per token in the next 48 hours | exact (new buyers) |
+| 18 | Real-time lists on the test | the frozen time-weighted blend rebuilt every hour, scored on the test | exact (the project's label) |
+| 19 | Buyers of brand-new tokens | one hour after a launch, the accounts most likely to buy next, from the first buyers | exact (who buys in the next 24 hours) |
 
 **Rules that carry over from the project** ([`project_direction.md`](project_direction.md)):
 simple, explained code; reusable logic in `src/scripts/` with tests;
@@ -554,6 +556,55 @@ scored.
 **Notebook:** `28_buyer_forecast.ipynb`. **Effort:** 1 day.
 
 ---
+
+## 18. WP18 Real-time lists on the test
+
+**Goal:** confirm on the test the largest gain seen in development. Notebook 13
+measured on Dev B that rebuilding the lists every hour inside the two target
+days lifts the time-weighted blend from 0.143 to 0.187, while the refreshed
+baseline stays at 0.096. This was never scored on the test. Added 27 November
+2026.
+
+- **Models:** the frozen time-weighted blend (`configs/frozen.json`) and the
+  popularity baseline, both rebuilt every hour with `cold_start.refreshed_evaluate`
+  (the protocol of notebook 13, unchanged), and both at 48 hours (the main
+  protocol) for the paired comparison. Nothing is tuned.
+- **Criterion (stated now):** on the 14 test points, (a) the hourly blend
+  beats the hourly baseline and (b) the hourly blend beats the same blend
+  built once per two days; for both, the mean paired difference is positive
+  with a 95% bootstrap interval over points that excludes zero.
+- **Reported alongside:** the share of cold pairs reached, and the hourly
+  blend against the scored test baseline (0.108).
+
+## 19. WP19 Buyers of brand-new tokens
+
+**Goal:** WP15 for tokens the model has never seen. A token launched after the
+evaluation point has no column in the similarity matrix; its first buyers give
+it one. Added 27 November 2026.
+
+- **Tokens:** first traded ever in $[t, t + 24\text{ h})$, with at least 3
+  *seed* accounts (audience accounts that trade it in its first hour) and at
+  least 10 buyers.
+- **Audience:** the accounts with at least one token in the 14 days before $t$
+  (as WP15), minus the seeds. **Buyers:** audience accounts whose first trade
+  of the token falls in (launch + 1 h, launch + 25 h]. Everything used to
+  score is known at launch + 1 h: account histories before $t$, and the seeds.
+- **Scores** (variants chosen on Dev A by mean recall@1000):
+  - *seed profile*: $p_j$ = number of seeds with token $j$ in their 14-day
+    window; score $= W p$ ($W$: accounts × tokens window matrix);
+  - *seed profile, idf*: the same with $p_j$ divided by $\log(1 + \text{accounts with } j)$;
+  - *recommender neighbours*: $p$ passed through the frozen blend's similarity
+    matrix, score $= W (S p)$: the recommender's own co-trading similarities
+    read for the new token.
+- **Baselines** (the better chosen on Dev A): *activity* (window size, as
+  WP15) and *launch hunters* (the number of window tokens the account first
+  traded within a day of their launch). Random is reported.
+- **Criterion (stated now):** on the 14 test points, the chosen score beats
+  the chosen baseline in mean recall@1000 per point, 95% bootstrap interval
+  over points excluding zero.
+- **Checks reported alongside:** precision@100; the same without WP10's farm
+  groups (as WP15); the same counting only buyers who arrive more than 6 hours
+  after launch, so that bots buying with the seeds cannot carry the result.
 
 ## Order of work and effort
 
