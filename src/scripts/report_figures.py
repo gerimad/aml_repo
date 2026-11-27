@@ -270,7 +270,84 @@ def buyer_forecast(out: Path) -> None:
     plt.close(fig)
 
 
-FIGURES = [test_per_point, neighbour_grid, half_life, refresh, outcomes_by_age, returning, audience, safer, scam_roc, buyer_forecast]
+def new_token_buyers(out: Path) -> None:
+    """WP19: share of a new token's next-day buyers among the first 1,000 accounts picked one hour after launch."""
+    tokens = pd.concat([pd.read_parquet(RESULTS / "wp19" / f"tokens_{part}.parquet") for part in ("dev_b", "test")])
+    per_point = tokens.groupby(["method", "point"])["recall_1000"].mean().reset_index()
+    methods = {
+        "seed profile, idf": ("overlap with the first buyers' tokens (chosen on Dev A)", plots.SERIES[0], False),
+        "launch hunters": ("accounts that chase new launches (baseline)", plots.SERIES[1], True),
+        "activity": ("most active accounts", plots.SERIES[3], True),
+        "random": ("random accounts", plots.INK_SECONDARY, True),
+    }
+    fig, ax = plt.subplots(figsize=(7.5, 3.0))
+    for method, (label, colour, dashed) in methods.items():
+        line = per_point[per_point["method"] == method]
+        ax.plot(line["point"], line["recall_1000"], marker="o", markersize=4, color=colour, linestyle="--" if dashed else "-", label=label)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("recall@1000 (buyers found)")
+    split_line(ax, 1.04)
+    short_dates(ax)
+    ax.legend(loc="lower center", ncol=2, fontsize=7, bbox_to_anchor=(0.5, 1.0), frameon=False)
+    fig.tight_layout()
+    fig.savefig(out / "app_new_token_buyers.pdf")
+    plt.close(fig)
+
+
+def realtime(out: Path) -> None:
+    """WP18: test recall@10 per point with lists built once per two days and rebuilt every hour."""
+    table = read(RESULTS / "wp18" / "per_point_test.csv")
+    lines = {
+        ("time-weighted blend", 1): ("blend, rebuilt every hour", plots.SERIES[0], "-"),
+        ("time-weighted blend", 48): ("blend, built once per two days", plots.SERIES[0], ":"),
+        ("baseline", 1): ("popularity, rebuilt every hour", plots.SERIES[1], "-"),
+        ("baseline", 48): ("popularity, built once (baseline)", plots.SERIES[1], ":"),
+    }
+    fig, ax = plt.subplots(figsize=(7.5, 3.0))
+    for (model, hours), (label, colour, style) in lines.items():
+        line = table[(table["model"] == model) & (table["refresh_hours"] == hours)]
+        ax.plot(line["point"], line["recall"], marker="o", markersize=4, color=colour, linestyle=style, label=label)
+    ax.set_ylim(bottom=0)
+    ax.set_ylabel("recall@10")
+    short_dates(ax)
+    ax.legend(loc="lower center", ncol=2, fontsize=7, bbox_to_anchor=(0.5, 1.0), frameon=False)
+    fig.tight_layout()
+    fig.savefig(out / "app_realtime.pdf")
+    plt.close(fig)
+
+
+NARRATIVES = {  # WP20, notebook 31: cluster at resolution 2 -> name given from its most-listed tokens
+    4: ("Bitcoin, gold, stablecoins", "#1F3F7A"), 6: ("Blue chips (UNI, LINK, AAVE, PEPE)", "#2A62CC"),
+    2: ("Mid-cap alts and AI", "#6FA0E6"), 3: ("Small-cap DeFi", "#A9C0EC"), 1: ("Old-school memes", "#F2C38B"),
+    10: ("Cat, dog and frog memes", "#E8963D"), 0: ("Vitalik and AI memes", "#D9622B"), 5: ("Elon and SpaceX memes", "#A8431C"),
+}  # fmt: skip
+
+
+def narratives(out: Path) -> None:
+    """WP20: share of the recommender's list slots by narrative at each evaluation point."""
+    import narratives as nr
+
+    clusters = pd.read_parquet(RESULTS / "wp20" / "clusters.parquet")
+    table = pd.read_parquet(RESULTS / "wp20" / "table.parquet")
+    cluster_of = nr.group_small(table, clusters.set_index("token")["cluster_2"])
+    names = cluster_of.map(lambda c: NARRATIVES[c][0] if c in NARRATIVES else "other")
+    wide = nr.shares(table, names).pivot(index="point", columns="narrative", values="list_share").fillna(0)
+    order = [name for name, _ in NARRATIVES.values()] + ["other"]
+    colours = [colour for _, colour in NARRATIVES.values()] + [plots.GRID]
+    fig, ax = plt.subplots(figsize=(7.5, 3.4))
+    ax.stackplot(wide.index, wide[order].T.to_numpy(), labels=order, colors=colours, edgecolor="white", linewidth=0.5)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("share of list slots")
+    short_dates(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles[::-1], labels[::-1], loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=7, frameon=False)
+    fig.tight_layout()
+    fig.savefig(out / "app_narratives.pdf")
+    plt.close(fig)
+
+
+FIGURES = [test_per_point, neighbour_grid, half_life, refresh, outcomes_by_age, returning, audience, safer, scam_roc, buyer_forecast,
+           new_token_buyers, realtime, narratives]
 
 
 def main(out: Path) -> None:
