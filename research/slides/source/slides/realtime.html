@@ -1,0 +1,23 @@
+<section id="realtime" style="gap:40px">
+<div class="head">
+<p class="eyebrow">New result · real-time lists</p>
+<h2 class="title">Lists rebuilt every hour</h2>
+</div>
+<div style="display:flex; gap:96px; align-items:flex-end">
+<div class="rise" style="--i:1; width:560px; display:flex; flex-direction:column; gap:24px; padding-bottom:96px">
+<p class="num" style="font-size:200px; color:#2A62CC">1.8×</p>
+<p class="lead" style="width:560px">as many of traders’ next tokens found as by popularity</p>
+<p class="small">Popularity barely gains from rebuilding (0.108 → 0.111): only personalized lists react to what each trader just did.</p>
+</div>
+<div class="vchart">
+<p class="body strong">Recall@10 on the 14 test points</p>
+<div class="vtrack" style="height:400px">
+<div class="vcol"><p class="num-m">0.108</p><div class="vbar" style="--i:1; height:167px; background:#D9622B"></div></div>
+<div class="vcol"><p class="num-m">0.151</p><div class="vbar" style="--i:2; height:234px; background:#A9C0EC"></div></div>
+<div class="vcol"><p class="num-m" style="color:#2A62CC">0.194</p><div class="vbar" style="--i:3; height:301px; background:#2A62CC"></div></div>
+</div>
+<div class="vlabels"><p class="vlabel">popularity (baseline)</p><p class="vlabel">model, lists made every 2 days</p><p class="vlabel"><b>model, rebuilt every hour</b></p></div>
+</div>
+</div>
+<p class="small">Frozen model, nothing tuned on the test, one run. Hourly lists beat both alternatives at all 14 points (+0.044 over 2-day lists, interval +0.032 to +0.057).</p>
+</section>

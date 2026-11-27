@@ -1,0 +1,39 @@
+{
+  "kind": "lambdamart",
+  "params": {
+    "num_leaves": 31,
+    "learning_rate": 0.05,
+    "min_data_in_leaf": 1000,
+    "n_trees": 300
+  },
+  "first_stage": {
+    "k": 400,
+    "shrink": 200.0,
+    "weight": 0.2,
+    "half_life": 7.0,
+    "history_days": null,
+    "candidates": 500
+  },
+  "features": [
+    "pop_14d",
+    "pop_1d",
+    "pop_half_life_1d",
+    "pop_half_life_7d",
+    "pop_rank",
+    "knn_score",
+    "knn_score_time",
+    "max_similarity",
+    "n_pointing",
+    "user_window_tokens",
+    "user_past_tokens",
+    "user_days_since_last_trade",
+    "user_share_buys",
+    "token_age_days",
+    "token_censored",
+    "token_users_first_hour",
+    "token_users_first_day",
+    "launch_weth",
+    "launch_usdc",
+    "launch_usdt"
+  ]
+}

@@ -308,3 +308,27 @@ def bootstrap_mean(values, n_boot: int = 1000, seed: int = 0, level: float = 0.9
     means = values[rng.integers(0, len(values), (n_boot, len(values)))].mean(axis=1)
     low, high = np.quantile(means, [(1 - level) / 2, (1 + level) / 2])
     return float(low), float(high)
+
+
+# --------------------------------------------------------------------------
+# Time weighting (work package 4)
+# --------------------------------------------------------------------------
+
+
+def time_weights(ages_days, half_life_days: float | None):
+    """Turn a sparse matrix of ages (in days) into weights 2^(-age / half_life).
+
+    An interaction of age 0 weighs 1, one of age `half_life_days` weighs 0.5.
+    half_life_days=None means an infinite half-life: every weight is 1, which
+    gives back the unweighted binary matrix. The sparsity pattern is kept, so
+    a weighted matrix can be used wherever a binary history is used: as the
+    input of Popularity (weighted popularity), of ItemKNN.fit (weighted
+    similarity) and as the user rows given to scores (weighted profile).
+    """
+    weights = ages_days.copy().tocsr().astype(np.float32)
+    if half_life_days is None:
+        weights.data[:] = 1.0
+    else:
+        weights.data = np.power(2.0, -weights.data / half_life_days).astype(np.float32)
+    assert weights.data.size == 0 or (weights.data.min() > 0 and weights.data.max() <= 1), "weights lie in (0, 1]"
+    return weights

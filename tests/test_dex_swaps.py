@@ -165,16 +165,49 @@ def test_fetch_pool_tokens_handles_pools_that_do_not_answer(monkeypatch):
     assert node.calls == 2
 
 
+class FakeMulticallNode:
+    """Answers Multicall3 aggregate3 calls like the chain would: pool "0xdead..." is not a pool."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def post(self, url, json=None, timeout=None):
+        from eth_abi import decode, encode
+
+        self.calls += 1
+        data = bytes.fromhex(json["params"][0]["data"][10:])  # drop "0x" and the 4-byte selector
+        calls = decode(["(address,bool,bytes)[]"], data)[0]
+        answers = []
+        for target, _, call_data in calls:
+            if target.lower().startswith("0xdead"):
+                answers.append((False, b""))
+            else:
+                digit = "1" if "0x" + call_data.hex() == ds.SELECTOR_TOKEN0 else "2"
+                answers.append((True, bytes.fromhex(topic("0x" + digit * 40)[2:])))
+        return FakeResponse({"id": 1, "result": "0x" + encode(["(bool,bytes)[]"], [answers]).hex()})
+
+
+POOL_A, POOL_B, POOL_C = ("0x" + c * 40 for c in "abc")
+DEAD = "0xdead" + "0" * 36
+
+
+def test_fetch_pool_tokens_multicall_reads_both_tokens_and_marks_non_pools():
+    node = FakeMulticallNode()
+    tokens = ds.fetch_pool_tokens_multicall([POOL_A, DEAD, POOL_B], session=node, per_request=2).set_index("pool")
+    assert node.calls == 2, "three pools at two per request"
+    assert tokens.loc[POOL_A, "token0"] == "0x" + "1" * 40 and tokens.loc[POOL_A, "token1"] == "0x" + "2" * 40
+    assert tokens.loc[DEAD].isna().all(), "a contract that is not a pool gets no tokens"
+
+
 def test_load_pool_tokens_caches_and_extends(tmp_path, monkeypatch):
-    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
-    node, real_fetch = FakeTokenNode(), ds.fetch_pool_tokens
-    monkeypatch.setattr(ds, "fetch_pool_tokens", lambda pools: real_fetch(pools, session=node))
-    first = ds.load_pool_tokens(["0xaaa", "0xbbb"], tmp_path)
-    assert len(first) == 2 and node.calls == 2  # one request per pool
-    again = ds.load_pool_tokens(["0xaaa"], tmp_path)
-    assert len(again) == 1 and node.calls == 2  # served from the cache
-    more = ds.load_pool_tokens(["0xaaa", "0xccc"], tmp_path)
-    assert set(more["pool"]) == {"0xaaa", "0xccc"} and node.calls == 3
+    node, real_fetch = FakeMulticallNode(), ds.fetch_pool_tokens_multicall
+    monkeypatch.setattr(ds, "fetch_pool_tokens_multicall", lambda pools, session=None: real_fetch(pools, session=node))
+    first = ds.load_pool_tokens([POOL_A, POOL_B], tmp_path)
+    assert len(first) == 2 and node.calls == 1, "both pools in one request"
+    again = ds.load_pool_tokens([POOL_A], tmp_path)
+    assert len(again) == 1 and node.calls == 1, "served from the cache"
+    more = ds.load_pool_tokens([POOL_A, POOL_C], tmp_path)
+    assert set(more["pool"]) == {POOL_A, POOL_C} and node.calls == 2
     assert more["token0"].notna().all()
 
 
@@ -211,3 +244,143 @@ def test_download_window_and_main(tmp_path, monkeypatch, capsys):
 def test_load_swaps_without_data(tmp_path):
     with pytest.raises(FileNotFoundError):
         ds.load_swaps(tmp_path)
+
+
+# --------------------------------------------------------------------------
+# Loading a block range and validating it (work package 1)
+# --------------------------------------------------------------------------
+
+
+def write_empty_chunk(directory, first, last):
+    """Create a chunk file with the right name and one swap in its first block."""
+    (directory / "chunks").mkdir(parents=True, exist_ok=True)
+    row = {column: [0] for column in ds.SWAP_COLUMNS}
+    row["block"] = [first]
+    pd.DataFrame(row).to_parquet(directory / "chunks" / f"swaps_{first}_{last}.parquet")
+
+
+def test_chunk_files_returns_only_the_requested_range_in_block_order(tmp_path):
+    for first in (3000, 1000, 2000, 4000):
+        write_empty_chunk(tmp_path, first, first + 999)
+    files = ds.chunk_files(tmp_path, 1000, 2999)
+    assert [f.name for f in files] == ["swaps_1000_1999.parquet", "swaps_2000_2999.parquet"]
+
+
+def test_chunk_files_raises_and_names_the_gap(tmp_path):
+    write_empty_chunk(tmp_path, 1000, 1999)
+    write_empty_chunk(tmp_path, 3000, 3999)
+    with pytest.raises(FileNotFoundError, match="2,000-2,999"):
+        ds.chunk_files(tmp_path, 1000, 3999)
+
+
+def test_chunk_files_needs_both_bounds_or_none(tmp_path):
+    write_empty_chunk(tmp_path, 1000, 1999)
+    with pytest.raises(ValueError):
+        ds.chunk_files(tmp_path, first_block=1000)
+
+
+def test_missing_ranges():
+    assert ds.missing_ranges([(10, 19), (20, 29)], 10, 29) == []
+    assert ds.missing_ranges([(10, 19), (30, 39)], 10, 39) == [(20, 29)]
+    assert ds.missing_ranges([(20, 29)], 10, 35) == [(10, 19), (30, 35)]
+
+
+def test_load_swaps_reads_only_the_requested_range(tmp_path):
+    for first in (1000, 2000, 3000):
+        write_empty_chunk(tmp_path, first, first + 999)
+    swaps = ds.load_swaps(tmp_path, 2000, 3999)
+    assert swaps["block"].tolist() == [2000, 3000]
+
+
+def one_day_of_swaps(day: str, n_per_hour: int = 2):
+    """A clean day: n_per_hour swaps in every hour, each in its own block, on one known pool."""
+    times = pd.date_range(day, periods=24 * n_per_hour, freq=f"{60 // n_per_hour}min", tz="UTC")
+    n = len(times)
+    first_block = int(pd.Timestamp(day).timestamp()) // 12
+    return pd.DataFrame({
+        "block": range(first_block, first_block + n), "tx_index": 0, "log_index": 0, "timestamp": times,
+        "tx_hash": [f"{day}-{i}" for i in range(n)], "tx_from": [f"user{i % 5}" for i in range(n)],
+        "pool": "p", "amount0": 1.0, "amount1": -1.0,
+    })  # fmt: skip
+
+
+POOL_P = pd.DataFrame({"pool": ["p"], "token0": ["A"], "token1": ["B"]})
+
+
+def test_validate_swaps_passes_clean_data():
+    swaps = pd.concat([one_day_of_swaps("2026-07-06"), one_day_of_swaps("2026-07-07")], ignore_index=True)
+    swaps["block"] = range(1000, 1000 + len(swaps))  # every block of the week has a swap
+    report = ds.validate_swaps(swaps, POOL_P)
+    assert len(report) == 1, "both days are in the same ISO week"
+    week = report.iloc[0]
+    assert week["swaps"] == 96 and week["duplicate_events"] == 0 and week["missing_values"] == 0
+    assert week["swaps_per_day_min"] == 48 and week["users_per_day_max"] == 5
+    assert week["longest_gap_blocks"] == 0
+    assert bool(week["passed"])
+
+
+def test_validate_swaps_reports_the_longest_run_of_blocks_without_a_swap():
+    swaps = one_day_of_swaps("2026-07-06")
+    swaps["block"] = range(1000, 1000 + len(swaps))
+    swaps.loc[10:, "block"] += 150  # 150 blocks without any swap, as if one log request came back empty
+    assert ds.validate_swaps(swaps, POOL_P).iloc[0]["longest_gap_blocks"] == 150
+
+
+def test_validate_swaps_counts_a_planted_duplicate_and_a_missing_value():
+    swaps = one_day_of_swaps("2026-07-06")
+    swaps = pd.concat([swaps, swaps.iloc[[3]]], ignore_index=True)  # the same event twice
+    swaps.loc[10, "tx_from"] = None
+    week = ds.validate_swaps(swaps, POOL_P).iloc[0]
+    assert week["duplicate_events"] == 2, "both copies of the duplicated event are counted"
+    assert week["missing_values"] == 1
+    assert not week["passed"]
+
+
+def test_validate_swaps_flags_unknown_pools():
+    swaps = one_day_of_swaps("2026-07-06")
+    swaps.loc[:4, "pool"] = "unknown"
+    week = ds.validate_swaps(swaps, POOL_P).iloc[0]
+    assert week["swaps_with_known_tokens"] < 0.999 and not week["passed"]
+
+
+class LaggingNode:
+    """Answers every transaction lookup, except that it first answers null `misses` times for "0xlate"."""
+
+    def __init__(self, misses):
+        self.misses = misses
+
+    def post(self, url, json=None, timeout=None):
+        calls = json if isinstance(json, list) else [json]
+        answers = []
+        for call in calls:
+            tx_hash = call["params"][0]
+            if tx_hash == "0xlate" and self.misses > 0:
+                self.misses -= 1
+                answers.append({"id": call["id"], "result": None})
+            else:
+                answers.append({"id": call["id"], "result": {"from": "0xAB", "to": "0xCD"}})
+        return FakeResponse(answers if isinstance(json, list) else answers[0])
+
+
+def test_fetch_transactions_asks_again_when_the_node_says_not_found(monkeypatch, capsys):
+    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
+    transactions = ds.fetch_transactions(["0xa", "0xlate", "0xb"], session=LaggingNode(misses=3))
+    assert transactions["tx_hash"].tolist() == ["0xa", "0xlate", "0xb"], "the order of the input is kept"
+    assert transactions["tx_from"].tolist() == ["0xab", "0xab", "0xab"]
+    assert "round 3/8" in capsys.readouterr().err, "every round of asking again is logged"
+
+
+def test_fetch_transactions_gives_up_if_a_transaction_stays_missing(monkeypatch):
+    monkeypatch.setattr(ds.time, "sleep", lambda seconds: None)
+    with pytest.raises(RuntimeError, match="still not found after 8 rounds"):
+        ds.fetch_transactions(["0xlate"], session=LaggingNode(misses=100))
+
+
+def test_decode_symbol_reads_strings_and_fixed_bytes_and_rejects_junk():
+    from eth_abi import encode
+
+    assert ds.decode_symbol(encode(["string"], ["PEPE"])) == "PEPE"
+    assert ds.decode_symbol(b"MKR" + b"\x00" * 29) == "MKR"
+    assert ds.decode_symbol(encode(["string"], ["x" * 40])) is None, "too long for a symbol"
+    assert ds.decode_symbol(encode(["string"], ["bad\nname"])) is None, "not printable"
+    assert ds.decode_symbol(b"") is None

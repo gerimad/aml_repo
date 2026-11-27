@@ -1,0 +1,21 @@
+<section id="method">
+<div class="head">
+<p class="eyebrow">The model</p>
+<h2 class="title">Popularity plus item neighbours, re-ranked by LambdaMART</h2>
+</div>
+<div class="spacer"></div>
+<div style="display:flex; align-items:center; gap:24px">
+<div class="rise" style="--i:1; width:340px; display:flex; flex-direction:column; gap:20px">
+<div class="node"><h3>Popularity</h3><p class="small">accounts per token, last 14 days (the baseline)</p></div>
+<div class="node"><h3>Item neighbours</h3><p class="small">tokens traded by the same accounts (cosine, k = 400)</p></div>
+</div>
+<x-shape kind="arrow-right" class="arrow rise" style="--i:2"></x-shape>
+<div class="node rise" style="--i:2; width:310px"><h3>Fixed blend</h3><p class="small">0.5 × popularity + 0.5 × neighbours, each scaled per account</p></div>
+<x-shape kind="arrow-right" class="arrow rise" style="--i:3"></x-shape>
+<div class="node node-key rise" style="--i:3; width:310px"><h3>LambdaMART ranker</h3><p class="small">re-orders ~680 candidates with 20 features</p></div>
+<x-shape kind="arrow-right" class="arrow rise" style="--i:4"></x-shape>
+<div class="node rise" style="--i:4; flex:1"><h3>Top 10</h3><p class="small">tokens per account, every 2 days</p></div>
+</div>
+<div class="spacer"></div>
+<p class="body rise" style="--i:5; width:1400px">Without the neighbour features the ranker falls back to <span class="strong">popularity level</span> (recall 0.105 against 0.101): neighbours carry the gain.</p>
+</section>

@@ -1,0 +1,12 @@
+{
+  "commit": "0e1a49e0b0c0c1fdaa825ca9d6b0c4259f0e198b",
+  "started": "2026-11-23T13:02:32.091930+00:00",
+  "finished": "2026-11-23T14:07:43.386665+00:00",
+  "primary": "ranker: lambdamart",
+  "mean_difference": 0.0458317730439622,
+  "interval": [
+    0.03810149416187374,
+    0.05514566259627457
+  ],
+  "success": true
+}

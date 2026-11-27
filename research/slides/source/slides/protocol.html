@@ -1,0 +1,18 @@
+<section id="protocol">
+<div class="head">
+<p class="eyebrow">Evaluation</p>
+<h2 class="title">One timeline, with the test period scored once</h2>
+</div>
+<div class="rise" style="--i:1; display:flex; gap:6px">
+<div class="seg" style="width:274px; background:#ECE8DF"><h3>Burn-in</h3><p class="small">18 Jun – 2 Jul</p><p class="small">history only</p></div>
+<div class="seg" style="width:392px; background:#DCE5F6"><h3>Dev A</h3><p class="small">2 – 22 Jul · 10 points</p><p class="small">tune settings, train the ranker</p></div>
+<div class="seg" style="width:432px; background:#A9C0EC"><h3>Dev B</h3><p class="small" style="color:#0F1B2D">22 Jul – 13 Aug · 11 points</p><p class="small" style="color:#0F1B2D">choose between models</p></div>
+<div class="seg" style="width:548px; background:#2A62CC"><h3 style="color:#F6F4EF">Test</h3><p class="small" style="color:#F6F4EF">13 Aug – 10 Sep · 14 points</p><p class="small" style="color:#F6F4EF">models frozen and tagged first, then scored once</p></div>
+</div>
+<div class="spacer"></div>
+<div class="row">
+<div class="tile rise" style="--i:2"><p class="num-m">Recall@10</p><p class="small">share of an account’s new tokens found in its list, averaged over accounts</p></div>
+<div class="tile rise" style="--i:3"><p class="num-m">Paired</p><p class="small">model minus baseline at each point, 95% bootstrap interval over points</p></div>
+<div class="tile rise" style="--i:4"><p class="num-m">Stated first</p><p class="small">success: mean gain on the 14 test points above 0, interval excluding 0</p></div>
+</div>
+</section>

@@ -27,12 +27,15 @@ One row per swap, with:
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
+from eth_abi import decode, encode
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "dex_swaps"
 LOGS_RPC = "https://eth.drpc.org"  # serves eth_getLogs for old blocks, 100 blocks per call
@@ -68,7 +71,9 @@ def rpc(url: str, payload, session=None, retries: int = 6, timeout: int = 90):
             last_error = str(answer)[:300]
         except (requests.RequestException, ValueError) as error:
             last_error = repr(error)
-        time.sleep(min(2**attempt, 20))
+        wait = min(2**attempt, 20)
+        print(f"  retry {attempt + 1}/{retries} in {wait}s ({url}): {last_error[:120]}", file=sys.stderr, flush=True)
+        time.sleep(wait)
     raise RuntimeError(f"RPC call to {url} failed: {last_error}")
 
 
@@ -130,23 +135,56 @@ def fetch_swap_logs(start: int, end: int, url: str = LOGS_RPC, session=None, ste
     return pd.DataFrame(records, columns=SWAP_COLUMNS)
 
 
-def fetch_transactions(hashes, url: str = TX_RPC, session=None, batch: int = 100) -> pd.DataFrame:
-    """Signer and called contract of each transaction: columns tx_hash, tx_from, tx_to."""
+def fetch_transactions(
+    hashes, url: str = TX_RPC, session=None, batch: int = 25, rounds: int = 8, pause: float = 1.0
+) -> pd.DataFrame:
+    """Signer and called contract of each transaction: columns tx_hash, tx_from, tx_to.
+
+    `batch` lookups are sent per request. Small batches waste less work when
+    a rate-limited endpoint answers part of a batch with errors (the whole
+    batch is then retried by rpc).
+
+    The public endpoint spreads requests over several nodes, and some of them
+    answer null for old transactions. The transactions certainly exist (their
+    swap logs were just read), so the ones answered null are collected and
+    asked for again together, after `pause` seconds, up to `rounds` times.
+    Each such round is logged. Raises RuntimeError if any are still missing.
+    """
     hashes = list(dict.fromkeys(hashes))
-    rows = []
+    found = {}
     for i in range(0, len(hashes), batch):
         part = hashes[i : i + batch]
-        payload = [
-            {"jsonrpc": "2.0", "id": j, "method": "eth_getTransactionByHash", "params": [h]}
-            for j, h in enumerate(part)
-        ]
-        for tx_hash, tx in zip(part, rpc(url, payload, session)):
-            if tx is None:
-                raise RuntimeError(f"transaction {tx_hash} not found")
-            rows.append(
-                {"tx_hash": tx_hash, "tx_from": tx["from"].lower(), "tx_to": (tx["to"] or "").lower()}
-            )
+        for tx_hash, tx in zip(part, _lookup_transactions(part, url, session)):
+            if tx is not None:
+                found[tx_hash] = tx
+
+    missing = [h for h in hashes if h not in found]
+    for attempt in range(1, rounds + 1):
+        if not missing:
+            break
+        print(f"  {len(missing)} transaction(s) answered null, asking again (round {attempt}/{rounds})", file=sys.stderr, flush=True)
+        time.sleep(pause)
+        for i in range(0, len(missing), batch):
+            part = missing[i : i + batch]
+            for tx_hash, tx in zip(part, _lookup_transactions(part, url, session)):
+                if tx is not None:
+                    found[tx_hash] = tx
+        missing = [h for h in missing if h not in found]
+    if missing:
+        raise RuntimeError(f"{len(missing)} transaction(s) still not found after {rounds} rounds, e.g. {missing[0]}")
+
+    rows = [
+        {"tx_hash": h, "tx_from": found[h]["from"].lower(), "tx_to": (found[h]["to"] or "").lower()} for h in hashes
+    ]
     return pd.DataFrame(rows, columns=["tx_hash", "tx_from", "tx_to"])
+
+
+def _lookup_transactions(part: list[str], url: str, session=None) -> list:
+    """One batch request of eth_getTransactionByHash; the answers in the order of `part` (None if not found)."""
+    payload = [
+        {"jsonrpc": "2.0", "id": j, "method": "eth_getTransactionByHash", "params": [h]} for j, h in enumerate(part)
+    ]
+    return rpc(url, payload, session)
 
 
 SELECTOR_TOKEN0, SELECTOR_TOKEN1 = "0x0dfe1681", "0xd21220a7"  # token0() and token1()
@@ -223,27 +261,142 @@ def _is_revert(answer: dict) -> bool:
     return error.get("code") == 3 or "revert" in str(error.get("message", "")).lower()
 
 
-def load_pool_tokens(
-    pools, data_dir: Path = DATA_DIR, block_size: int = 800, workers: int = 8
-) -> pd.DataFrame:
+MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"  # the same address on every EVM chain
+SELECTOR_AGGREGATE3 = "0x82ad56cb"  # aggregate3((address target, bool allowFailure, bytes callData)[])
+
+
+def fetch_pool_tokens_multicall(pools, url: str = TX_RPC, session=None, per_request: int = 200) -> pd.DataFrame:
+    """The two tokens of each pool, many pools per request: columns pool, token0, token1.
+
+    Uses the Multicall3 contract, which runs a list of calls inside one
+    eth_call and returns each call's success flag and answer. Every pool
+    gets two calls, token0() and token1(), both allowed to fail. A pool
+    whose calls fail or do not return one address (not a standard pool, or
+    destroyed) gets None in both columns, as in fetch_pool_tokens.
+
+    Reading the *current* state of a contract is not an archive request, so
+    the transaction endpoint serves it. A pool's tokens never change, so the
+    current state gives the tokens it had at every swap.
+    """
+    pools = list(dict.fromkeys(pools))
+    rows = []
+    for i in range(0, len(pools), per_request):
+        part = pools[i : i + per_request]
+        calls = [
+            (pool, True, bytes.fromhex(selector[2:]))
+            for pool in part
+            for selector in (SELECTOR_TOKEN0, SELECTOR_TOKEN1)
+        ]
+        data = SELECTOR_AGGREGATE3 + encode(["(address,bool,bytes)[]"], [calls]).hex()
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [{"to": MULTICALL3, "data": data}, "latest"]}
+        answers = decode(["(bool,bytes)[]"], bytes.fromhex(rpc(url, payload, session)[2:]))[0]
+        assert len(answers) == 2 * len(part), "Multicall3 answers every call"
+        for j, pool in enumerate(part):
+            (ok0, word0), (ok1, word1) = answers[2 * j], answers[2 * j + 1]
+            ok = ok0 and ok1 and len(word0) == 32 and len(word1) == 32
+            rows.append({
+                "pool": pool,
+                "token0": "0x" + word0[-20:].hex() if ok else None,
+                "token1": "0x" + word1[-20:].hex() if ok else None,
+            })  # fmt: skip
+    return pd.DataFrame(rows, columns=["pool", "token0", "token1"])
+
+
+SELECTOR_SYMBOL = "0x95d89b41"  # symbol()
+SELECTOR_DECIMALS = "0x313ce567"  # decimals()
+
+
+def decode_symbol(word: bytes) -> str | None:
+    """A token's symbol() answer as text, or None if it is not readable.
+
+    Most tokens return an ABI string; some old ones (MKR, for example)
+    return a fixed 32-byte value padded with zero bytes. Anything that is
+    not short printable text gives None, so that a strange contract cannot
+    put arbitrary bytes into a table or a page.
+    """
+    text = None
+    if len(word) >= 64:
+        try:
+            text = decode(["string"], word)[0]
+        except Exception:
+            text = None
+    if text is None and len(word) == 32:
+        text = word.rstrip(b"\x00").decode("utf-8", errors="ignore")
+    if not text:
+        return None
+    text = text.strip()
+    if not text or len(text) > 16 or not text.isprintable():
+        return None
+    return text
+
+
+def fetch_token_metadata_multicall(tokens, url: str = TX_RPC, session=None, per_request: int = 200) -> pd.DataFrame:
+    """symbol() and decimals() of each token address, many per request: columns address, symbol, decimals.
+
+    Uses Multicall3 as fetch_pool_tokens_multicall does; both calls may
+    fail. A failed or unreadable symbol gives None; a failed decimals()
+    gives None (a token without decimals cannot be priced). Neither value
+    changes after a token is created, so the current state is enough.
+    """
+    tokens = list(dict.fromkeys(tokens))
+    rows = []
+    for i in range(0, len(tokens), per_request):
+        part = tokens[i : i + per_request]
+        calls = [
+            (token, True, bytes.fromhex(selector[2:]))
+            for token in part
+            for selector in (SELECTOR_SYMBOL, SELECTOR_DECIMALS)
+        ]
+        data = SELECTOR_AGGREGATE3 + encode(["(address,bool,bytes)[]"], [calls]).hex()
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [{"to": MULTICALL3, "data": data}, "latest"]}
+        answers = decode(["(bool,bytes)[]"], bytes.fromhex(rpc(url, payload, session)[2:]))[0]
+        assert len(answers) == 2 * len(part), "Multicall3 answers every call"
+        for j, token in enumerate(part):
+            (ok_symbol, symbol_word), (ok_decimals, decimals_word) = answers[2 * j], answers[2 * j + 1]
+            decimals = int.from_bytes(decimals_word, "big") if ok_decimals and len(decimals_word) == 32 else None
+            rows.append({
+                "address": token,
+                "symbol": decode_symbol(symbol_word) if ok_symbol else None,
+                "decimals": decimals if decimals is not None and decimals <= 36 else None,
+            })  # fmt: skip
+    return pd.DataFrame(rows, columns=["address", "symbol", "decimals"])
+
+
+def load_token_metadata(tokens, data_dir: Path = DATA_DIR, block_size: int = 2000) -> pd.DataFrame:
+    """Symbol and decimals of the given token addresses, from a local cache that is extended as needed."""
+    path = data_dir / "token_metadata.parquet"
+    columns = ["address", "symbol", "decimals"]
+    known = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
+    missing = [token for token in dict.fromkeys(tokens) if token not in set(known["address"])]
+    session = requests.Session()
+    for i in range(0, len(missing), block_size):
+        fetched = fetch_token_metadata_multicall(missing[i : i + block_size], session=session)
+        known = pd.concat([known, fetched], ignore_index=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        known.to_parquet(path)
+    return known[known["address"].isin(set(tokens))].reset_index(drop=True)
+
+
+def load_pool_tokens(pools, data_dir: Path = DATA_DIR, block_size: int = 2000, verbose: bool = False) -> pd.DataFrame:
     """Tokens of the given pools, from a local cache that is extended as needed.
 
-    Missing pools are fetched `block_size` at a time by `workers` threads,
-    and the cache is saved after each block, so an interrupted run loses little.
+    Missing pools are fetched with fetch_pool_tokens_multicall, `block_size`
+    at a time, and the cache is saved after each block, so an interrupted
+    run loses little. With verbose=True each block prints one progress line.
     """
     path = data_dir / "pool_tokens.parquet"
     columns = ["pool", "token0", "token1"]
     known = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
     have = set(known["pool"])
     missing = [pool for pool in dict.fromkeys(pools) if pool not in have]
+    session = requests.Session()
     for i in range(0, len(missing), block_size):
-        block = missing[i : i + block_size]
-        shares = [block[j::workers] for j in range(workers) if block[j::workers]]
-        with ThreadPoolExecutor(workers) as pool_of_threads:
-            fetched = list(pool_of_threads.map(fetch_pool_tokens, shares))
-        known = pd.concat([known, *fetched], ignore_index=True)
+        fetched = fetch_pool_tokens_multicall(missing[i : i + block_size], session=session)
+        known = pd.concat([known, fetched], ignore_index=True)
         path.parent.mkdir(parents=True, exist_ok=True)
         known.to_parquet(path)
+        if verbose:
+            print(f"  pool tokens: {min(i + block_size, len(missing)):,} of {len(missing):,} new pools looked up", flush=True)
     return known[known["pool"].isin(set(pools))].reset_index(drop=True)
 
 
@@ -278,13 +431,137 @@ def download_window(start: int, n_blocks: int, out_dir: Path = DATA_DIR, workers
             print(f"{i}/{len(ranges)} {path.name}", flush=True)
 
 
-def load_swaps(data_dir: Path = DATA_DIR) -> pd.DataFrame:
-    """Load all downloaded chunks as one frame, in chain order."""
-    files = sorted((data_dir / "chunks").glob("swaps_*.parquet"))
-    if not files:
+def chunk_files(
+    data_dir: Path = DATA_DIR, first_block: int | None = None, last_block: int | None = None
+) -> list[Path]:
+    """The chunk files that lie inside blocks first_block..last_block, in block order.
+
+    The range of a chunk is read from its file name (swaps_<first>_<last>.parquet),
+    so no file is opened. With both bounds given, the chunks must cover the
+    range exactly, without gaps; otherwise a FileNotFoundError lists what is
+    missing. With no bounds, every chunk is returned.
+
+    Assumption: chunk files are never partial. download_chunk only gives a
+    file its final name after it is completely written.
+    """
+    files = list((data_dir / "chunks").glob("swaps_*.parquet"))
+    ranges = []
+    for path in files:
+        _, first, last = path.stem.split("_")
+        ranges.append((int(first), int(last), path))
+    ranges.sort()
+
+    if first_block is None and last_block is None:
+        selected = ranges
+    else:
+        if first_block is None or last_block is None:
+            raise ValueError("give both first_block and last_block, or neither")
+        selected = [r for r in ranges if r[0] >= first_block and r[1] <= last_block]
+        missing = missing_ranges([(f, l) for f, l, _ in selected], first_block, last_block)
+        if missing:
+            shown = ", ".join(f"{f:,}-{l:,}" for f, l in missing[:10])
+            raise FileNotFoundError(
+                f"blocks {first_block:,} to {last_block:,} are not fully downloaded; "
+                f"{len(missing)} missing range(s): {shown}"
+            )
+    if not selected:
         raise FileNotFoundError(f"no swap chunks in {data_dir}; run dex_swaps.py first")
+    return [path for _, _, path in selected]
+
+
+def missing_ranges(ranges: list[tuple[int, int]], first_block: int, last_block: int) -> list[tuple[int, int]]:
+    """Block ranges inside first_block..last_block that none of the given (first, last) ranges cover."""
+    missing = []
+    expected_next = first_block
+    for first, last in sorted(ranges):
+        if first > expected_next:
+            missing.append((expected_next, first - 1))
+        expected_next = max(expected_next, last + 1)
+    if expected_next <= last_block:
+        missing.append((expected_next, last_block))
+    return missing
+
+
+def load_swaps(
+    data_dir: Path = DATA_DIR, first_block: int | None = None, last_block: int | None = None
+) -> pd.DataFrame:
+    """Load the downloaded chunks as one frame, in chain order.
+
+    Without bounds every chunk is loaded (this is what notebooks 05 and 08
+    do). The project always passes its block range, so that the exploration
+    data is never loaded by accident; see chunk_files for the gap check.
+    """
+    files = chunk_files(data_dir, first_block, last_block)
     swaps = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
     return swaps.sort_values(["block", "tx_index", "log_index"], ignore_index=True)
+
+
+def validate_swaps(swaps: pd.DataFrame, pool_tokens: pd.DataFrame) -> pd.DataFrame:
+    """Data-quality checks per calendar week (ISO weeks, UTC). One row per week.
+
+    Columns:
+      week                       Monday of the week
+      days                       number of days of the week present in the data
+      swaps, users               number of swaps and of distinct signing accounts
+      blocks_with_swap           share of the blocks of the week (from its first to
+                                 its last block) that contain at least one swap
+      longest_gap_blocks         the longest run of consecutive blocks without any swap.
+                                 Logs are fetched 100 blocks per request, so a request
+                                 that wrongly came back empty would leave a gap of at
+                                 least 100 blocks; single empty blocks are normal.
+      duplicate_events           swaps whose (tx_hash, log_index) occurs more than once
+      missing_values             number of empty cells in the core columns
+      swaps_with_known_tokens    share of swaps on a pool whose two tokens are known
+      swaps_per_day_min / _max   over the full days of the week
+      users_per_day_min / _max   over the full days of the week
+      low_days                   full days with fewer than half the week's median swaps
+      passed                     blocks_with_swap >= 0.98, no duplicates, no missing
+                                 values, swaps_with_known_tokens >= 0.999
+
+    Daily volumes are reported, not checked against a threshold, because
+    trading activity really does change from week to week. A "full day" is a
+    day whose first and last hour both contain swaps; the first and last day
+    of a download are usually partial.
+    """
+    core = ["block", "tx_index", "log_index", "timestamp", "tx_hash", "tx_from", "pool", "amount0", "amount1"]
+    known_pools = set(pool_tokens.dropna()["pool"])
+    frame = swaps[core].copy()
+    frame["week"] = frame["timestamp"].dt.tz_localize(None).dt.to_period("W-SUN").dt.start_time
+    frame["day"] = frame["timestamp"].dt.floor("D")
+    frame["hour"] = frame["timestamp"].dt.hour
+
+    rows = []
+    for week, part in frame.groupby("week", sort=True):
+        per_day = part.groupby("day").agg(
+            swaps=("block", "size"), users=("tx_from", "nunique"), first_hour=("hour", "min"), last_hour=("hour", "max")
+        )
+        full_days = per_day[(per_day["first_hour"] == 0) & (per_day["last_hour"] == 23)]
+        n_blocks = part["block"].max() - part["block"].min() + 1
+        median_swaps = full_days["swaps"].median() if len(full_days) else float("nan")
+        row = {
+            "week": week.date(),
+            "days": len(per_day),
+            "swaps": len(part),
+            "users": part["tx_from"].nunique(),
+            "blocks_with_swap": part["block"].nunique() / n_blocks,
+            "longest_gap_blocks": int((np.diff(np.unique(part["block"].to_numpy())) - 1).max(initial=0)),
+            "duplicate_events": int(part.duplicated(["tx_hash", "log_index"], keep=False).sum()),
+            "missing_values": int(part[core].isna().sum().sum()),
+            "swaps_with_known_tokens": part["pool"].isin(known_pools).mean(),
+            "swaps_per_day_min": full_days["swaps"].min(),
+            "swaps_per_day_max": full_days["swaps"].max(),
+            "users_per_day_min": full_days["users"].min(),
+            "users_per_day_max": full_days["users"].max(),
+            "low_days": int((full_days["swaps"] < 0.5 * median_swaps).sum()),
+        }
+        row["passed"] = bool(
+            row["blocks_with_swap"] >= 0.98
+            and row["duplicate_events"] == 0
+            and row["missing_values"] == 0
+            and row["swaps_with_known_tokens"] >= 0.999
+        )
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def main() -> None:

@@ -1,0 +1,66 @@
+{
+  "status": "proposal for the checkpoint of implementation plan 12.7 step 10; not frozen",
+  "tail": {
+    "surprise": {
+      "setting": "surprise_K3_H6_stopnone_accounts",
+      "k": 3,
+      "holding_hours": 6,
+      "stop": null,
+      "weighting": "accounts",
+      "vs_tail_popularity": 0.10116427808118295,
+      "standard_error": 0.03113507680625378
+    },
+    "filtered_visible": {
+      "setting": "filtered_visible_K3_H6_stopnone_eth",
+      "k": 3,
+      "holding_hours": 6,
+      "stop": null,
+      "weighting": "eth",
+      "vs_tail_popularity": 0.1348177825746375,
+      "standard_error": 0.033385151056113734
+    },
+    "unexplained_flow": {
+      "setting": "unexplained_flow_K3_H6_stopnone_eth",
+      "k": 3,
+      "holding_hours": 6,
+      "stop": null,
+      "weighting": "eth",
+      "vs_tail_popularity": 0.07875312864822381,
+      "standard_error": 0.03671704766032014
+    }
+  },
+  "tail_choice_period": [
+    {
+      "version": "surprise",
+      "days": 26,
+      "daily_mean": -0.13983678308554956,
+      "tail_popularity_daily_mean": 0.5419898496442813,
+      "difference": -0.6818266327298306,
+      "low": -2.19190791052045,
+      "high": 0.11524340160813491
+    },
+    {
+      "version": "filtered_visible",
+      "days": 26,
+      "daily_mean": -0.12735111660678908,
+      "tail_popularity_daily_mean": 0.5419898496442813,
+      "difference": -0.6693409662510704,
+      "low": -2.165649878452979,
+      "high": 0.11504742700927252
+    },
+    {
+      "version": "unexplained_flow",
+      "days": 26,
+      "daily_mean": 8.6434946676502,
+      "tail_popularity_daily_mean": 0.5419898496442813,
+      "difference": 8.10150481800592,
+      "low": -2.1052029717002902,
+      "high": 26.403049582064725
+    }
+  ],
+  "launch": "no setting proposed: see section 5 (every full-sleeve portfolio ends near zero; positive growth-optimal fractions come from a few positions)",
+  "trials": {
+    "tail": 108,
+    "launch": 108
+  }
+}
