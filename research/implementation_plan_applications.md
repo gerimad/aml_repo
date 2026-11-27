@@ -18,6 +18,7 @@ code, tests, notebook, success criterion and stated limits.
 | 16 | Safer recommendations | how often lists contain tokens that collapse, and a re-ranking that lowers it | exact outcome from prices (collapse) |
 | 17 | Forecasting new buyers | the number of new buyers per token in the next 48 hours | exact (new buyers) |
 | 18 | Real-time lists on the test | the frozen time-weighted blend rebuilt every hour, scored on the test | exact (the project's label) |
+| 20 | Narratives in the lists | co-trading clusters of tokens and their share of the recommender's lists over time | exact (next two days' new buyers per cluster) |
 | 19 | Buyers of brand-new tokens | one hour after a launch, the accounts most likely to buy next, from the first buyers | exact (who buys in the next 24 hours) |
 
 **Rules that carry over from the project** ([`project_direction.md`](project_direction.md)):
@@ -605,6 +606,35 @@ it one. Added 27 November 2026.
 - **Checks reported alongside:** precision@100; the same without WP10's farm
   groups (as WP15); the same counting only buyers who arrive more than 6 hours
   after launch, so that bots buying with the seeds cannot carry the result.
+
+## 20. WP20 Narratives in the recommender's lists
+
+**Goal:** describe what the recommender recommends as *narratives* (groups of
+tokens traded by the same accounts) and how their weight moves over time, and
+check whether the lists' narrative mix anticipates where new buyers go. Added
+27 November 2026.
+
+- **Narratives:** Louvain clusters (`token_map.clusters`) of the symmetric
+  item-neighbour similarity (k = 400, shrink = 200) fitted on the whole
+  history at the last test point, over tokens with at least 20 accounts. The
+  clustering is descriptive and uses the whole period; every share below is
+  computed with the same clustering, model and baselines alike. Resolution:
+  the smallest of {0.5, 1, 2, 4} at which the largest cluster holds under half
+  of all list slots. Clusters under 2% of list slots on every point are
+  grouped as "other". Each is named after its most-listed tokens.
+- **Strength at point t:** the narrative's share of all list slots of the
+  frozen fixed blend (top-50 lists of every active account, WP17's
+  `list_count`).
+- **Outcome:** the narrative's share of the new buyers in the next 48 hours
+  (WP17's `n_known`), over the same tokens.
+- **Baselines:** the narrative's share of 14-day popularity (accounts per
+  token in the 14 days before $t$, the project's baseline) and of the new
+  buyers of the last 48 hours (recent flow).
+- **Criterion (stated now):** on the 14 test points, the mean absolute
+  difference between list shares and outcome shares (over narratives) is
+  smaller than for popularity shares: mean paired difference negative, 95%
+  bootstrap interval over points excluding zero. Recent flow is reported
+  alongside.
 
 ## Order of work and effort
 
