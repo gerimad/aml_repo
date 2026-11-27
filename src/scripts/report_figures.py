@@ -164,7 +164,113 @@ def returning(out: Path) -> None:
     plt.close(fig)
 
 
-FIGURES = [test_per_point, neighbour_grid, half_life, refresh, outcomes_by_age, returning]
+def split_line(ax, label_y: float) -> None:
+    """A thin vertical line where Dev B ends and the test starts, with both parts named."""
+    start = pc.POINTS["test"][0]
+    ax.axvline(start, color=plots.INK_SECONDARY, linewidth=0.8, linestyle=":")
+    ax.text(start, label_y, "Dev B  ", ha="right", va="top", fontsize=8, color=plots.INK_SECONDARY)
+    ax.text(start, label_y, "  test", ha="left", va="top", fontsize=8, color=plots.INK_SECONDARY)
+
+
+def audience(out: Path) -> None:
+    """WP15: share of a token's new buyers among the first 1,000 accounts, per point (mean over tokens)."""
+    tokens = pd.concat([pd.read_parquet(RESULTS / "wp15" / f"tokens_{part}.parquet") for part in ("dev_b", "test")])
+    per_point = tokens.groupby(["method", "point"])["recall_1000"].mean().reset_index()
+    methods = {  # method in the table -> label, colour, dashed
+        "raw neighbours": ("neighbour score, unscaled (chosen on Dev A)", plots.SERIES[0], False),
+        "activity": ("most active accounts (baseline)", plots.SERIES[1], True),
+        "model": ("blend as planned (scaled per account)", plots.SERIES[2], False),
+        "random": ("random accounts", plots.INK_SECONDARY, True),
+    }
+    fig, ax = plt.subplots(figsize=(7.5, 3.0))
+    for method, (label, colour, dashed) in methods.items():
+        line = per_point[per_point["method"] == method]
+        ax.plot(line["point"], line["recall_1000"], marker="o", markersize=4, color=colour, linestyle="--" if dashed else "-", label=label)
+    ax.set_ylim(0, 0.6)
+    ax.set_ylabel("recall@1000 (buyers found)")
+    split_line(ax, 0.59)
+    short_dates(ax)
+    ax.legend(loc="lower center", ncol=2, fontsize=7, bbox_to_anchor=(0.5, 1.0), frameon=False)
+    fig.tight_layout()
+    fig.savefig(out / "app_audience.pdf")
+    plt.close(fig)
+
+
+def safer(out: Path) -> None:
+    """WP16: recall@10 against the share of listed tokens that collapse, over the re-ranking weight λ."""
+    table = pd.read_csv(RESULTS / "wp16" / "tradeoff.csv")
+    curve = table.groupby(["part", "lam"])[["recall", "collapsed_share"]].mean().reset_index()
+    fig, ax = plt.subplots(figsize=(3.7, 3.0))
+    for slot, (part, label) in enumerate([("dev_b", "Dev B"), ("test", "test")]):
+        line = curve[curve["part"] == part]
+        ax.plot(100 * line["collapsed_share"], line["recall"], marker="o", markersize=4, color=plots.SERIES[slot], label=label)
+        for _, row in line.iterrows():
+            if row["lam"] in (0, 0.5, 2):
+                ax.annotate(f"λ={row['lam']:g}", (100 * row["collapsed_share"], row["recall"]), textcoords="offset points",
+                            xytext=(0, 6 if part == "test" else -11), ha="center", fontsize=7, color=plots.INK_SECONDARY)  # fmt: skip
+    ax.set_xlabel("listed tokens that collapse (%)")
+    ax.set_ylabel("recall@10")
+    ax.set_xlim(left=0)
+    ax.grid(True, axis="both")
+    ax.legend(loc="center left", fontsize=7)
+    fig.tight_layout()
+    fig.savefig(out / "app_safer.pdf")
+    plt.close(fig)
+
+
+def scam_roc(out: Path) -> None:
+    """WP13: ROC for collapse on the test, baseline against baseline plus the recommender's features (fitted on Dev A)."""
+    from sklearn.metrics import roc_auc_score, roc_curve
+
+    import scam_push as sp
+
+    windows = pd.read_parquet(RESULTS / "wp13" / "tokens.parquet")
+    dev_a, test = windows[windows["part"] == "dev_a"], windows[windows["part"] == "test"]
+    models = {
+        "public baseline": (sp.BASELINE_FEATURES, plots.SERIES[1]),
+        "baseline + recommender": (sp.BASELINE_FEATURES + sp.RECOMMENDER_FEATURES, plots.SERIES[0]),
+        "recommender alone": (sp.RECOMMENDER_FEATURES, plots.SERIES[2]),
+    }
+    fig, ax = plt.subplots(figsize=(3.7, 3.0))
+    for label, (features, colour) in models.items():
+        score = sp.fit_score(dev_a, test, features)
+        fpr, tpr, _ = roc_curve(test["collapsed"], score)
+        ax.plot(fpr, tpr, color=colour, linewidth=1.5, label=f"{label} ({roc_auc_score(test['collapsed'], score):.2f})")
+    ax.plot([0, 1], [0, 1], color=plots.GRID, linestyle="--", linewidth=1)
+    ax.set_xlabel("false positive rate")
+    ax.set_ylabel("true positive rate")
+    ax.grid(True, axis="both")
+    ax.legend(loc="lower right", fontsize=7, title="model (AUC)", title_fontsize=7)
+    fig.tight_layout()
+    fig.savefig(out / "app_scam_roc.pdf")
+    plt.close(fig)
+
+
+def buyer_forecast(out: Path) -> None:
+    """WP17: mean absolute error of the new-buyer forecast per point, without and with the list count."""
+    import demand_forecast as dfc
+
+    tokens = dfc.add_logs(pd.read_parquet(RESULTS / "wp17" / "tokens.parquet"))
+    dev_a, later = tokens[tokens["part"] == "dev_a"], tokens[tokens["part"].isin(["dev_b", "test"])]
+    models = {
+        "recent buyers, activity, age (baseline)": (dfc.BASELINE_FEATURES, plots.SERIES[1], "--"),
+        "... plus the number of lists the token is on": (dfc.WITH_LISTS, plots.SERIES[0], "-"),
+    }
+    fig, ax = plt.subplots(figsize=(7.5, 2.8))
+    for label, (features, colour, style) in models.items():
+        errors = dfc.fit_and_score(dev_a, later, features)
+        ax.plot(errors["point"], errors["mae"], marker="o", markersize=4, color=colour, linestyle=style, label=label)
+    ax.set_ylim(0.15, 0.3)
+    ax.set_ylabel("mean abs. error, log(1 + N)")
+    split_line(ax, 0.298)
+    short_dates(ax)
+    ax.legend(loc="lower center", ncol=2, fontsize=7, bbox_to_anchor=(0.5, 1.0), frameon=False)
+    fig.tight_layout()
+    fig.savefig(out / "app_buyer_forecast.pdf")
+    plt.close(fig)
+
+
+FIGURES = [test_per_point, neighbour_grid, half_life, refresh, outcomes_by_age, returning, audience, safer, scam_roc, buyer_forecast]
 
 
 def main(out: Path) -> None:
